@@ -26,6 +26,7 @@ class ASTWalker():
         if isinstance(ast_node, ast_custom.ClassBody):
             return ast_custom.ClassBody
         return ast_custom.Body
+    
 
     def _parse(self, ast_node: ast.AST, parent: ast.AST | None = None):
         """
@@ -145,6 +146,7 @@ class ASTWalker():
                             end_col_offset=cur_node.orelse[-1].end_col_offset,
                         )
                     else:
+                        # the dummy node inside gets returned
                         else_body = ast_custom.ElseBody(body=[ast_custom.ElseBody()])
                     else_tail = self._parse(else_body, parent=cur_node)
 

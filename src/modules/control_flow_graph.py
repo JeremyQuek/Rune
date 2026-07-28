@@ -2,7 +2,6 @@ import ast
 from collections import defaultdict
 
 import ast_custom
-from ast_custom import *
 from lexical_environment import LexicalEnvironment
 
 class Node():
@@ -11,25 +10,29 @@ class Node():
         self.enviroment = enviroment
         self.next = []
 
+# Environmental boundaries, clone before passing down the child
 class TerminalNode(Node): pass
 class EntryNode(TerminalNode): pass 
 class ExitNode(TerminalNode):pass 
+class BranchEntryNode(TerminalNode): pass
+
+# Splinter into subgraph
+class FunctionDefinitionNode(TerminalNode): pass
+
+# Does not splinter
+class ClassDefinitionNode(Node): pass
 
 # Regular code node
 class BodyNode(Node):pass
-# Splinters into a graph that join
-class ControlFlowNode(Node):pass
-# Splinters into a subgraph
-class DefinitionNode(Node): pass
 
 
 class ControlFlowGraph():
     mapping= {
-        ast.FunctionDef : DefinitionNode,
-        ast.ClassDef : DefinitionNode,
-        ast.For: ControlFlowNode,
-        ast.While: ControlFlowNode,
-        ast.If: ControlFlowNode,
+        ast.FunctionDef : FunctionDefinitionNode,
+        ast.ClassDef : ClassDefinitionNode,
+        ast.For: BranchEntryNode,
+        ast.While: BranchEntryNode,
+        ast.If: BranchEntryNode,
         ast_custom.Body: BodyNode,
         ast_custom.FunctionBody: BodyNode,
         ast_custom.ClassBody: BodyNode,
@@ -88,15 +91,15 @@ class ControlFlowGraph():
         if isinstance(node, ExitNode):
             return f"Exit({nid})"
         block = node.block
-        if isinstance(block, IfBody):
+        if isinstance(block, ast_custom.IfBody):
             return f"IfBody({nid})"
-        if isinstance(block, ElseBody):
+        if isinstance(block, ast_custom.ElseBody):
             return f"ElseBody({nid})"
-        if isinstance(block, FunctionBody):
+        if isinstance(block, ast_custom.FunctionBody):
             return f"FuncBody({nid})"
-        if isinstance(block, ClassBody):
+        if isinstance(block, ast_custom.ClassBody):
             return f"ClassBody({nid})"
-        if isinstance(block, Body):
+        if isinstance(block, ast_custom.Body):
             return f"Body({nid})"
         if isinstance(block, ast.FunctionDef):
             return f"FuncDef({nid})"
