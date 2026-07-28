@@ -27,6 +27,15 @@ class ASTWalker():
             return ast_custom.ClassBody
         return ast_custom.Body
     
+    def _create_body(self, stmts: list[ast.AST], body_type: ast.AST) -> ast.AST:
+        return body_type(
+            body=stmts,
+            lineno=stmts[0].lineno,
+            col_offset=stmts[0].col_offset,
+            end_lineno=stmts[-1].end_lineno,
+            end_col_offset=stmts[-1].end_col_offset,
+        )
+
 
     def _parse(self, ast_node: ast.AST, parent: ast.AST | None = None):
         """
@@ -126,6 +135,7 @@ class ASTWalker():
                             end_lineno=stmts[-1].end_lineno,
                             end_col_offset=stmts[-1].end_col_offset,
                         )])
+                    
                     cfg_nodes.append([cur_node])
 
                     if_body = ast_custom.IfBody(
@@ -135,6 +145,20 @@ class ASTWalker():
                         end_lineno=cur_node.body[-1].end_lineno,
                         end_col_offset=cur_node.body[-1].end_col_offset,
                     )
+
+                    # For the FOR case, the for statement itself is an assignment
+                    # So we add another assign body right before the if body so that the assignment
+                    # Only propagates down the if path
+                    if isinstance(cur_node, ast.For):
+                        for_assignment_node = ast.Assign()
+                        for_assignment_node.targets = [cur_node.target]
+                        for_assignment_node.value = cur_node.iter 
+                        for_assignment_node.lineno = cur_node.lineno 
+                        for_assignment_node.col_offset=cur_node.col_offset
+                        for_assignment_node.end_lineno = cur_node.iter.lineo
+                        for_assignment_node.end_col_offset = cur_node.iter.end_col_offset
+                        if_body.body.insert(0, for_assignment_node)
+                        
                     if_tail = self._parse(if_body, parent=cur_node)
 
                     if cur_node.orelse:
@@ -155,6 +179,8 @@ class ASTWalker():
                     for tail_node in tail:
                         skip.add((cur_node, tail_node))
                     l = r+1
+                
+                case ast.TRY
                 
         if l < len(code_body):
             stmts = code_body[l:]

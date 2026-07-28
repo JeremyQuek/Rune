@@ -14,10 +14,9 @@ class Node():
 class TerminalNode(Node): pass
 class EntryNode(TerminalNode): pass 
 class ExitNode(TerminalNode):pass 
-class BranchEntryNode(TerminalNode): pass
 
-# Splinter into subgraph
-class FunctionDefinitionNode(TerminalNode): pass
+class BranchEntryNode(EntryNode): pass # - This needs to handle for!
+class FunctionDefinitionNode(EntryNode): pass # - This needs to handle function definition
 
 # Does not splinter
 class ClassDefinitionNode(Node): pass
