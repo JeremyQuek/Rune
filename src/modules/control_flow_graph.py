@@ -32,11 +32,16 @@ class ControlFlowGraph():
         ast.For: BranchEntryNode,
         ast.While: BranchEntryNode,
         ast.If: BranchEntryNode,
+        ast.Try: BranchEntryNode,
         ast_custom.Body: BodyNode,
         ast_custom.FunctionBody: BodyNode,
         ast_custom.ClassBody: BodyNode,
         ast_custom.IfBody: BodyNode,
         ast_custom.ElseBody: BodyNode,
+        ast_custom.TryBody: BodyNode,
+        ast_custom.ExceptBody: BodyNode,
+        ast_custom.ForBody: BodyNode,
+        ast_custom.WhileBody: BodyNode,
         }
 
     def __init__(self):
@@ -85,6 +90,8 @@ class ControlFlowGraph():
 
     def _label(self, node: Node) -> str:
         nid = self._node_ids[id(node)]
+        if isinstance(node, BranchEntryNode):
+            return f"Branch({nid})"
         if isinstance(node, EntryNode):
             return f"Entry({nid})"
         if isinstance(node, ExitNode):
@@ -98,6 +105,14 @@ class ControlFlowGraph():
             return f"FuncBody({nid})"
         if isinstance(block, ast_custom.ClassBody):
             return f"ClassBody({nid})"
+        if isinstance(block, ast_custom.TryBody):
+            return f"TryBody({nid})"
+        if isinstance(block, ast_custom.ExceptBody):
+            return f"ExceptBody({nid})"
+        if isinstance(block, ast_custom.ForBody):
+            return f"ForBody({nid})"
+        if isinstance(block, ast_custom.WhileBody):
+            return f"WhileBody({nid})"
         if isinstance(block, ast_custom.Body):
             return f"Body({nid})"
         if isinstance(block, ast.FunctionDef):

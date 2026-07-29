@@ -1,0 +1,1 @@
+python3 src/modules/ast_walker.py

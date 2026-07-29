@@ -26,6 +26,10 @@ class Body(ast.AST):
         self.end_col_offset = end_col_offset
 
 class IfBody(Body): pass
+class WhileBody(Body): pass
+class ForBody(Body): pass
 class ElseBody(Body): pass
+class ExceptBody(Body): pass
 class ClassBody(Body): pass
 class FunctionBody(Body): pass
+class TryBody(Body): pass
