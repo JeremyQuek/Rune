@@ -320,9 +320,11 @@ class ASTWalker():
                         )])
                     
                     cfg_nodes.append([cur_node])
-                    try_except_tails = []
 
-                    self.scope_stack.append(TryCatchContext())
+                    try_catch_context = TryCatchContext()
+                    self.scope_stack.append(try_catch_context)
+                    
+                    try_except_tails = []
                     for handler in cur_node.handlers:
                         except_body = ast_custom.ExceptBody(
                             body=handler.body,
@@ -433,7 +435,6 @@ class ASTWalker():
                     l=r+1
                     break
                 
-                # Need to tie in to any except handler
                 case ast.Raise():
                     stmts = code_body[l:r+1]
                     cur_stmt = code_body[r]
