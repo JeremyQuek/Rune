@@ -2,31 +2,35 @@ import ast
 from collections import defaultdict
 
 import ast_custom
-from lexical_environment import LexicalEnvironment
 
 class Node():
     def __init__(self, block = None, enviroment = None):
         self.block = block
         self.enviroment = enviroment
         self.next = []
-    
-    def __repr__(self):
-        return self.__class__.__name__
 
-# Environmental boundaries, clone before passing down the child
+def __repr__(self):
+    return self.__class__.__name__
+
+# Special Nodes
 class TerminalNode(Node): pass
-class EntryNode(TerminalNode): pass 
-class ExitNode(TerminalNode):pass 
+class ModuleEntryNode(TerminalNode): pass 
+class ModuleExitNode(TerminalNode):pass 
 
-class BranchEntryNode(EntryNode): pass # - This needs to handle for!
-class FunctionDefinitionNode(EntryNode): pass # - This needs to handle function definition
-
-# Does not splinter
+class BranchEntryNode(TerminalNode): pass # - This needs to handle for!
+class FunctionDefinitionNode(TerminalNode): pass # - This needs to handle function definition
 class ClassDefinitionNode(Node): pass
 
-# Regular code node
-class BodyNode(Node):pass
-
+# Regular code nodes
+class ModuleBodyNode(Node):pass
+class FunctionBody(Node): pass
+class ClassBodyNode(Node): pass
+class IfBodyNode(Node): pass
+class ElseBodyNode(Node): pass
+class TryBodyNode(Node): pass
+class ExceptBodyNode(Node): pass
+class ForBodyNode(Node): pass
+class WhileBodyNode(Node): pass
 
 class ControlFlowGraph():
     mapping= {
@@ -36,19 +40,19 @@ class ControlFlowGraph():
         ast.While: BranchEntryNode,
         ast.If: BranchEntryNode,
         ast.Try: BranchEntryNode,
-        ast_custom.Body: BodyNode,
-        ast_custom.FunctionBody: BodyNode,
-        ast_custom.ClassBody: BodyNode,
-        ast_custom.IfBody: BodyNode,
-        ast_custom.ElseBody: BodyNode,
-        ast_custom.TryBody: BodyNode,
-        ast_custom.ExceptBody: BodyNode,
-        ast_custom.ForBody: BodyNode,
-        ast_custom.WhileBody: BodyNode,
+        ast_custom.Body: ModuleBodyNode,
+        ast_custom.FunctionBody: FunctionBody,
+        ast_custom.ClassBody: ClassBodyNode,
+        ast_custom.IfBody: IfBodyNode,
+        ast_custom.ElseBody: ElseBodyNode,
+        ast_custom.TryBody: TryBodyNode,
+        ast_custom.ExceptBody: ExceptBodyNode,
+        ast_custom.ForBody: ForBodyNode,
+        ast_custom.WhileBody: WhileBodyNode,
         }
 
     def __init__(self):
-        self.entry = EntryNode()
+        self.entry = ModuleEntryNode()
         self.nodes = {self.entry: self.entry}
         self.edges=[]
 
@@ -81,6 +85,14 @@ class ControlFlowGraph():
         self._id_counter += 1
         self._node_ids[id(node)] = self._id_counter
         return node
+    
+    def create_adjacency_list(self):
+        self.adj = defaultdict(list)
+        
+        for (u,v) in self.edges:
+            self.adj[u].append(v)
+        
+        return self.adj
 
     """
     Prints the edge list in a format pasteable into 
@@ -95,9 +107,9 @@ class ControlFlowGraph():
         nid = self._node_ids[id(node)]
         if isinstance(node, BranchEntryNode):
             return f"Branch({nid})"
-        if isinstance(node, EntryNode):
+        if isinstance(node, ModuleEntryNode):
             return f"Entry({nid})"
-        if isinstance(node, ExitNode):
+        if isinstance(node, ModuleExitNode):
             return f"Exit({nid})"
         block = node.block
         if isinstance(block, ast_custom.IfBody):

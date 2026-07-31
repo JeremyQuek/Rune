@@ -34,7 +34,7 @@ class ASTWalker():
         self.ast = self._get_ast()
         self.scope_stack = []
     
-    def traverse_ast_for_cfg(self):
+    def traverse_and_create_cfg(self):
         self._parse(self.ast, None)
 
     def _get_ast(self) -> ast.AST:
