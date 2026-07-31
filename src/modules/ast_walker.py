@@ -2,6 +2,13 @@ import ast
 import ast_custom
 from control_flow_graph import ControlFlowGraph
 
+"""
+
+Scope context markers pushed onto scope_stack to track lexical scope during AST walking.
+Used for validation (e.g. return must be inside a function, break inside a loop)
+and for connecting raise statements to their enclosing except handlers.
+
+"""
 class ScopeContext():
     def __repr__(self):
         return self.__class__.__name__
@@ -18,6 +25,7 @@ class FunctionContext(ScopeContext): pass
 class ClassContext(ScopeContext): pass
 
 class LoopContext(ScopeContext): pass
+
 
 class ASTWalker():
     def __init__(self, cfg: ControlFlowGraph, filepath: str):
