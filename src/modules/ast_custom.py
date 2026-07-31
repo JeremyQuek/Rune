@@ -36,3 +36,4 @@ class ExceptBody(Body): pass
 class ClassBody(Body): pass
 class FunctionBody(Body): pass
 class TryBody(Body): pass
+class FinallyBody(Body):pass

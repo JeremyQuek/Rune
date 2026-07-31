@@ -19,28 +19,19 @@ class TryCatchContext(ScopeContext):
         self.except_block = []
 
 class IfElseContext(ScopeContext): pass
-
 class FunctionContext(ScopeContext): pass
-
 class ClassContext(ScopeContext): pass
-
 class LoopContext(ScopeContext): pass
 
 
 class ASTWalker():
-    def __init__(self, cfg: ControlFlowGraph, filepath: str):
+    def __init__(self, ast: ast.AST, cfg: ControlFlowGraph,):
         self.cfg = cfg
-        self.filepath = filepath
-        self.ast = self._get_ast()
+        self.ast = ast
         self.scope_stack = []
     
     def traverse_and_create_cfg(self):
-        self._parse(self.ast, None)
-
-    def _get_ast(self) -> ast.AST:
-        with open(self.filepath, "r", encoding="utf-8") as f:
-            source_code = f.read()
-        return ast.parse(source_code, filename=self.filepath)
+        self._parse(self.ast, [None])
 
     def _get_body_type(self, ast_node: ast.AST):
         if isinstance(ast_node, ast_custom.IfBody):
@@ -59,6 +50,8 @@ class ASTWalker():
             return ast_custom.ForBody
         if isinstance(ast_node, ast_custom.WhileBody):
             return ast_custom.WhileBody
+        if isinstance(ast_node, ast_custom.FinallyBody):
+            return ast_custom.FinallyBody
         return ast_custom.Body
     
     def _create_body(self, stmts: list[ast.AST], body_type: ast.AST) -> ast.AST:
@@ -71,7 +64,7 @@ class ASTWalker():
         )
 
 
-    def _parse(self, ast_node: ast.AST, parent: ast.AST | None = None):
+    def _parse(self, ast_node: ast.AST, parents: list[ast.AST] | None = None):
         """
         Recursively decomposes a code region into CFG layers, returning its exit frontier.
 
@@ -107,7 +100,7 @@ class ASTWalker():
 
         # Step 1 split the list into sections
         l=0
-        cfg_nodes = [[parent]]
+        cfg_nodes = [parents]
         skip = set()
         for r in range(len(code_body)):
             cur_node = code_body[r]
@@ -132,7 +125,7 @@ class ASTWalker():
                     )
 
                     self.scope_stack.append(FunctionContext())
-                    self._parse(func_body, parent=cur_node)
+                    self._parse(func_body, parents=[cur_node])
                     self.scope_stack.pop()
 
                     l = r+1
@@ -158,7 +151,7 @@ class ASTWalker():
                     )
 
                     self.scope_stack.append(ClassContext())
-                    tail = self._parse(class_body, parent=cur_node)
+                    tail = self._parse(class_body, parents=[cur_node])
                     self.scope_stack.pop()
 
                     cfg_nodes.append(tail)
@@ -189,7 +182,7 @@ class ASTWalker():
                     )
 
                     self.scope_stack.append(IfElseContext())
-                    if_tail = self._parse(if_body, parent=cur_node)
+                    if_tail = self._parse(if_body, parents=[cur_node])
                     self.scope_stack.pop()
 
                     if cur_node.orelse:
@@ -204,7 +197,7 @@ class ASTWalker():
                         # the dummy node inside gets returned
                         else_body = ast_custom.ElseBody(body=[ast_custom.ElseBody()])
                     
-                    else_tail = self._parse(else_body, parent=cur_node)
+                    else_tail = self._parse(else_body, parents=[cur_node])
 
                     tail = if_tail + else_tail
                     cfg_nodes.append(tail)
@@ -234,7 +227,7 @@ class ASTWalker():
                     )
                     
                     self.scope_stack.append(LoopContext())
-                    while_tail = self._parse(while_body, parent=cur_node)
+                    while_tail = self._parse(while_body, parents=[cur_node])
                     self.scope_stack.pop()
 
                     if cur_node.orelse:
@@ -249,7 +242,7 @@ class ASTWalker():
                         # the dummy node inside gets returned
                         else_body = ast_custom.ElseBody(body=[ast_custom.ElseBody()])
                     
-                    else_tail = self._parse(else_body, parent=cur_node)
+                    else_tail = self._parse(else_body, parents=[cur_node])
 
                     tail = while_tail + else_tail
                     cfg_nodes.append(tail)
@@ -292,7 +285,7 @@ class ASTWalker():
                     for_body.body.insert(0, for_assignment_node)
                     
                     self.scope_stack.append(LoopContext())
-                    for_tail = self._parse(for_body, parent=cur_node)
+                    for_tail = self._parse(for_body, parents=[cur_node])
                     self.scope_stack.pop()
 
                     if cur_node.orelse:
@@ -307,7 +300,7 @@ class ASTWalker():
                         # the dummy node inside gets returned
                         else_body = ast_custom.ElseBody(body=[ast_custom.ElseBody()])
                     
-                    else_tail = self._parse(else_body, parent=cur_node)
+                    else_tail = self._parse(else_body, parents=[cur_node])
 
                     tail = for_tail + else_tail
                     cfg_nodes.append(tail)
@@ -327,7 +320,7 @@ class ASTWalker():
                         )])
                     
                     cfg_nodes.append([cur_node])
-                    tails = []
+                    try_except_tails = []
 
                     self.scope_stack.append(TryCatchContext())
                     for handler in cur_node.handlers:
@@ -359,8 +352,8 @@ class ASTWalker():
                             )
                             except_body.body.insert(0, exception_assignment_node)
 
-                        new_tails=self._parse(except_body, parent=cur_node)
-                        tails +=new_tails
+                        new_tails=self._parse(except_body, parents=[cur_node])
+                        try_except_tails +=new_tails
 
                         # Store (exception_type, node_ref)
                         scope_info = self.scope_stack[-1]
@@ -376,13 +369,28 @@ class ASTWalker():
                         end_col_offset=cur_node.body[-1].end_col_offset,
                     ) 
                     
-                    try_tail = self._parse(try_body, parent=cur_node)
+                    try_tail = self._parse(try_body, parents=[cur_node])
                     self.scope_stack.pop()
 
-                    tails+=try_tail
-                    cfg_nodes.append(tails)
-                    for tail_node in tails:
+                    try_except_tails+=try_tail
+                    cfg_nodes.append(try_except_tails)
+                    for tail_node in try_except_tails:
                         skip.add((cur_node, tail_node))
+                    
+                    if cur_node.finalbody:
+                        finally_body = ast_custom.FinallyBody(
+                            body=cur_node.finalbody,
+                            lineno=stmts[0].lineno,
+                            col_offset=stmts[0].col_offset,
+                            end_lineno=stmts[-1].end_lineno,
+                            end_col_offset=stmts[-1].end_col_offset,
+                        )
+                        # All the tails of the try_except_block point to the finally's first block
+                        finally_tails = self._parse(finally_body, try_except_tails)
+                        cfg_nodes.append(finally_tails)
+                        for parent in try_except_tails:
+                            for child in finally_tails:
+                                skip.add((parent, child))
                     l = r+1
                 
                 case ast.Return() | ast.Yield():

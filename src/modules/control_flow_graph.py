@@ -9,14 +9,14 @@ class Node():
         self.enviroment = enviroment
         self.next = []
 
-def __repr__(self):
-    return self.__class__.__name__
+    def __repr__(self):
+        return self.__class__.__name__
 
-# Special Nodes
+# Special Nodes: Terminal Nodes Represent enviromental boundary nodesß
 class TerminalNode(Node): pass
+
 class ModuleEntryNode(TerminalNode): pass 
 class ModuleExitNode(TerminalNode):pass 
-
 class BranchEntryNode(TerminalNode): pass # - This needs to handle for!
 class FunctionDefinitionNode(TerminalNode): pass # - This needs to handle function definition
 class ClassDefinitionNode(Node): pass
@@ -31,6 +31,7 @@ class TryBodyNode(Node): pass
 class ExceptBodyNode(Node): pass
 class ForBodyNode(Node): pass
 class WhileBodyNode(Node): pass
+class FinallyBodyNode(Node): pass
 
 class ControlFlowGraph():
     mapping= {
@@ -49,12 +50,15 @@ class ControlFlowGraph():
         ast_custom.ExceptBody: ExceptBodyNode,
         ast_custom.ForBody: ForBodyNode,
         ast_custom.WhileBody: WhileBodyNode,
+        ast_custom.FinallyBody: FinallyBodyNode,
         }
 
     def __init__(self):
         self.entry = ModuleEntryNode()
         self.nodes = {self.entry: self.entry}
         self.edges=[]
+        self.adj = defaultdict(list)
+        self.indeg = defaultdict(int)
 
         # For pretty print
         self._id_counter = 0
@@ -65,7 +69,18 @@ class ControlFlowGraph():
         v = self._get_node(child)
         u.next.append(v)
         self.edges.append([u,v])
-
+    
+    def create_adjacency_list(self):
+        for (u,v) in self.edges:
+            self.adj[u].append(v)
+        
+        return self.adj
+    
+    def count_indeg(self): 
+        for (u,v) in self.edges:
+            self.indeg[v]+=1
+            self.indeg[u]+=0 #Touch u
+        return self.indeg
 
     def _get_node(self, ast_node: ast.AST) -> Node:
         if ast_node not in self.nodes:
@@ -86,14 +101,6 @@ class ControlFlowGraph():
         self._node_ids[id(node)] = self._id_counter
         return node
     
-    def create_adjacency_list(self):
-        self.adj = defaultdict(list)
-        
-        for (u,v) in self.edges:
-            self.adj[u].append(v)
-        
-        return self.adj
-
     """
     Prints the edge list in a format pasteable into 
     graphonline.top/create_graph_by_edge_list for visual debugging.
@@ -112,6 +119,8 @@ class ControlFlowGraph():
         if isinstance(node, ModuleExitNode):
             return f"Exit({nid})"
         block = node.block
+        if isinstance(block, ast_custom.FinallyBody):
+            return f"FinallyBody({nid})"
         if isinstance(block, ast_custom.IfBody):
             return f"IfBody({nid})"
         if isinstance(block, ast_custom.ElseBody):
