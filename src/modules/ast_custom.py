@@ -25,6 +25,9 @@ class Body(ast.AST):
         self.end_lineno = end_lineno
         self.end_col_offset = end_col_offset
 
+    def unparse(self):
+        return "\n".join(ast.unparse(stmt) for stmt in self.body)
+
 class IfBody(Body): pass
 class WhileBody(Body): pass
 class ForBody(Body): pass
