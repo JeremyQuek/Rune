@@ -438,7 +438,7 @@ class ASTWalker():
                     )
                     cfg_nodes.append([cur_node])
            
-                    # TODO AST.raise attribute
+                    # TODO raise type = ast.Attribute
                     # Search for handlers within the nearest local scope
                     for i in range(len(self.scope_stack)-1, -1, -1):
                         if isinstance(self.scope_stack[i], FunctionContext):

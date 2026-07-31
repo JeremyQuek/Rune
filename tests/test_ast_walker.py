@@ -62,15 +62,14 @@ def run_tests():
             failed += 1
 
     print("Graph Test Results")
-    print("-" * 50)
+    print("-" * 40)
     for name, status, detail in results:
         icon = "PASS" if status == "PASS" else "FAIL"
         print(f"  [{icon}] {name}")
         if detail:
             print(detail)
-    print("=" * 50)
-    print(f"  Total: {passed + failed}  Passed: {passed}  Failed: {failed}")
-    print("=" * 50)
+    print("" * 40)
+    print(f"Total: {passed + failed}  Passed: {passed}  Failed: {failed}")
 
 if __name__ == "__main__":
     run_tests()
