@@ -9,6 +9,9 @@ class Node():
         self.block = block
         self.enviroment = enviroment
         self.next = []
+    
+    def __repr__(self):
+        return self.__class__.__name__
 
 # Environmental boundaries, clone before passing down the child
 class TerminalNode(Node): pass

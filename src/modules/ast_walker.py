@@ -2,18 +2,22 @@ import ast
 import ast_custom
 from control_flow_graph import ControlFlowGraph
 
-class TryCatchContext():
-    def __init__(self, try: ast_custom.TryBody = None, except: list[ast_custom.Except_body] = None):
-        self.try = try
-        self.except = except
+class ScopeContext():
+    def __repr__(self):
+        return self.__class__.__name__
 
-class IfElseContext():pass
+class TryCatchContext(ScopeContext):
+    def __init__(self, try_block: ast_custom.TryBody = None):
+        self.try_block = try_block
+        self.except_block = []
 
-class FunctionContext(): pass
+class IfElseContext(ScopeContext): pass
 
-class ClassContext(): pass
+class FunctionContext(ScopeContext): pass
 
-class LoopContext(): pass
+class ClassContext(ScopeContext): pass
+
+class LoopContext(ScopeContext): pass
 
 class ASTWalker():
     def __init__(self, cfg: ControlFlowGraph, filepath: str):
@@ -245,7 +249,7 @@ class ASTWalker():
                         skip.add((cur_node, tail_node))
                     l = r+1
 
-                 case ast.For():
+                case ast.For():
                     if r > l:
                         stmts = code_body[l:r]
                         cfg_nodes.append([ast_custom.Body(
@@ -269,7 +273,6 @@ class ASTWalker():
                     # For the FOR case, the for statement itself is an assignment
                     # So we add another assign body right before the if body so that the assignment
                     # Only propagates down the if path
-                    if isinstance(cur_node, ast.For):
                     for_assignment_node = ast.Assign(
                         targets=[cur_node.target],
                         value=cur_node.iter,
@@ -320,16 +323,6 @@ class ASTWalker():
 
                     self.scope_stack.append(TryCatchContext())
                     for handler in cur_node.handlers:
-                        # Same logic as the for case
-                        exception_assignment_node = ast.Assign(
-                            targets=[handler.name],
-                            value=handler.type,
-                            lineno=handler.lineno,
-                            col_offset=handler.col_offset,
-                            end_lineno=handler.lineno,
-                            end_col_offset=handler.end_col_offset,
-                        )
-
                         except_body = ast_custom.ExceptBody(
                             body=handler.body,
                             lineno=handler.body[0].lineno,
@@ -337,9 +330,35 @@ class ASTWalker():
                             end_lineno=handler.body[-1].end_lineno,
                             end_col_offset=handler.body[-1].end_col_offset,
                         )
+                        
+                        # Ensure its not a bare except
+                        # TODO handle ast.Attribute
+                        if handler.name:
+                            exception_assignment_node = ast.Assign(
+                                targets=[ast.Name(
+                                    id=handler.name,
+                                    ctx=ast.Store(),
+                                    lineno=handler.lineno,
+                                    col_offset=handler.col_offset,
+                                    end_lineno=handler.lineno,
+                                    end_col_offset=handler.end_col_offset,
+                                )],
+                                value=handler.type,
+                                lineno=handler.lineno,
+                                col_offset=handler.col_offset,
+                                end_lineno=handler.lineno,
+                                end_col_offset=handler.end_col_offset,
+                            )
+                            except_body.body.insert(0, exception_assignment_node)
 
-                        except_body.body.insert(0, exception_assignment_node)
-                        tails+=self._parse(except_body, parent=cur_node)
+                        new_tails=self._parse(except_body, parent=cur_node)
+                        tails +=new_tails
+
+                        # Store (exception_type, node_ref)
+                        scope_info = self.scope_stack[-1]
+                        if handler.type: scope_info.except_block.append((handler.type.id, new_tails))  
+                        # "" represents catch-all exception
+                        else: scope_info.except_block.append(("", new_tails)) 
 
                     try_body = ast_custom.TryBody(
                         body=cur_node.body,
@@ -358,9 +377,7 @@ class ASTWalker():
                         skip.add((cur_node, tail_node))
                     l = r+1
                 
-                # TODO add validation, need to walk backwards on the scope stack
-                # Need to validate we're in function
-                case ast.Return():
+                case ast.Return() | ast.Yield():
                     stmts = code_body[l:r+1]
                     cfg_nodes.append([CustomBody(
                         body=stmts,
@@ -369,10 +386,18 @@ class ASTWalker():
                         end_lineno=stmts[-1].end_lineno,
                         end_col_offset=stmts[-1].end_col_offset,
                     )])
+
+                    # Validation check:
+                    in_function = False
+                    for i in range(len(self.scope_stack)-1,-1,-1):
+                        if isinstance(self.scope_stack[i], FunctionContext):
+                            in_function = True
+                            break
+                    if not in_function: raise SyntaxError
+
                     l=r+1
                     break
                 
-                # Need to validate we're in a loop
                 case ast.Break() | ast.Continue() :
                     stmts = code_body[l:r+1]
                     cfg_nodes.append([CustomBody(
@@ -382,19 +407,41 @@ class ASTWalker():
                         end_lineno=stmts[-1].end_lineno,
                         end_col_offset=stmts[-1].end_col_offset,
                     )])
+
+                    # Validation check:
+                    for i in range(len(self.scope_stack)-1,-1,-1):
+                        if isinstance(self.scope_stack[i], FunctionContext):
+                            raise SyntaxError
+                        if isinstance(self.scope_stack[i], LoopContext):
+                            break
                     l=r+1
                     break
                 
                 # Need to tie in to any except handler
                 case ast.Raise():
                     stmts = code_body[l:r+1]
-                    cfg_nodes.append([CustomBody(
+                    cur_stmt = code_body[r]
+                    cur_node = CustomBody(
                         body=stmts,
                         lineno=stmts[0].lineno,
                         col_offset=stmts[0].col_offset,
                         end_lineno=stmts[-1].end_lineno,
                         end_col_offset=stmts[-1].end_col_offset,
-                    )])
+                    )
+                    cfg_nodes.append([cur_node])
+           
+                    # TODO AST.raise attribute
+                    # Search for handlers within the nearest local scope
+                    for i in range(len(self.scope_stack)-1, -1, -1):
+                        if isinstance(self.scope_stack[i], FunctionContext):
+                            break
+
+                        if isinstance(self.scope_stack[i], TryCatchContext):
+                            for (exception_type, exception_bodies) in self.scope_stack[i].except_block:
+                                if cur_stmt.exc.id==exception_type or exception_type=="":
+                                    self.cfg.insert(cur_node, exception_bodies[0])
+                                    break
+
                     l=r+1
                     break
 
@@ -421,7 +468,7 @@ class ASTWalker():
 
 if __name__ == "__main__":
     cfg = ControlFlowGraph()
-    walker = ASTWalker(cfg, "tests/controlflow.py")
+    walker = ASTWalker(cfg, "tests/try_catch.py")
     walker.traverse_ast_for_cfg()
     walker.cfg._pretty_print()
 
