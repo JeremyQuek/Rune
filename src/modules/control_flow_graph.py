@@ -15,11 +15,12 @@ class Node():
 # Special Nodes: Terminal Nodes Represent enviromental boundary nodesß
 class TerminalNode(Node): pass
 
-class ModuleEntryNode(TerminalNode): pass 
-class ModuleExitNode(TerminalNode):pass 
+class ModuleEntryNode(TerminalNode): pass
+class ModuleExitNode(TerminalNode):pass
 class BranchEntryNode(TerminalNode): pass # - This needs to handle for!
 class FunctionDefinitionNode(TerminalNode): pass # - This needs to handle function definition
 class ClassDefinitionNode(Node): pass
+class ExitNode(Node): pass
 
 # Regular code nodes
 class ModuleBodyNode(Node):pass
@@ -39,10 +40,21 @@ class ControlFlowGraph():
         ast_wrappers.FunctionDefinitionEntry : FunctionDefinitionNode,
         ast.ClassDef : ClassDefinitionNode,
         ast_wrappers.ClassDefinitionEntry : ClassDefinitionNode,
-        ast.For: BranchEntryNode,
-        ast.While: BranchEntryNode,
-        ast.If: BranchEntryNode,
-        ast.Try: BranchEntryNode,
+        ast_wrappers.ModuleEntry: ModuleEntryNode,
+        # Branch decision nodes
+        ast_wrappers.IfElseEntry: BranchEntryNode,
+        ast_wrappers.ForLoopEntry: BranchEntryNode,
+        ast_wrappers.WhileLoopEntry: BranchEntryNode,
+        ast_wrappers.TryExceptBranchEntry: BranchEntryNode,
+        # Arm entry nodes - same region as their Body counterpart
+        ast_wrappers.ModuleBody: ModuleBodyNode,
+        ast_wrappers.IfEntry: IfBodyNode,
+        ast_wrappers.ElseEntry: ElseBodyNode,
+        ast_wrappers.ForEntry: ForBodyNode,
+        ast_wrappers.WhileEntry: WhileBodyNode,
+        ast_wrappers.TryEntry: TryBodyNode,
+        ast_wrappers.ExceptEntry: ExceptBodyNode,
+        ast_wrappers.FinallyEntry: FinallyBodyNode,
         ast_wrappers.Body: ModuleBodyNode,
         ast_wrappers.FunctionBody: FunctionBody,
         ast_wrappers.ClassBody: ClassBodyNode,
@@ -53,6 +65,7 @@ class ControlFlowGraph():
         ast_wrappers.ForBody: ForBodyNode,
         ast_wrappers.WhileBody: WhileBodyNode,
         ast_wrappers.FinallyBody: FinallyBodyNode,
+        ast_wrappers.Exit: ExitNode,
         }
 
     def __init__(self):
@@ -114,12 +127,9 @@ class ControlFlowGraph():
 
     def _label(self, node: Node) -> str:
         nid = self._node_ids[id(node)]
-        if isinstance(node, BranchEntryNode):
-            return f"Branch({nid})"
-        if isinstance(node, ModuleEntryNode):
+        if node.block is None:
             return f"Entry({nid})"
-        if isinstance(node, ModuleExitNode):
-            return f"Exit({nid})"
-        block = node.block
-        return block.__class__.__name__+ "(" + str(nid) + ")"
+        if isinstance(node, ExitNode):
+            return f"{''.join(word.capitalize() for word in node.block.kind.name.split('_'))}Exit({nid})"
+        return node.block.__class__.__name__ + f"({nid})"
        

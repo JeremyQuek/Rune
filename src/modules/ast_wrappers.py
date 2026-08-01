@@ -31,6 +31,7 @@ class Body(ast.AST):
     def unparse(self):
         return "\n".join(ast.unparse(stmt) for stmt in self.body)
 
+class ModuleBody(Body): pass
 class IfBody(Body): pass
 class WhileBody(Body): pass
 class ForBody(Body): pass
@@ -71,6 +72,7 @@ class ExitKind(Enum):
     TRY_EXCEPT_BRANCH = auto()
     FUNCTION_DEFINITION = auto()
     CLASS_DEFINITION = auto()
+    FINALLY = auto()
 
 class Exit(ast.AST):
     def __init__(self, kind: ExitKind):
@@ -95,6 +97,7 @@ class WhileEntry(Entry):pass
 class TryExceptBranchEntry(BranchEntry):pass
 class TryEntry(Entry):pass
 class ExceptEntry(Entry):pass
+class FinallyEntry(Entry):pass
 
 class FunctionDefinitionEntry(BranchEntry): pass
 
