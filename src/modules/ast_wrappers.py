@@ -41,6 +41,7 @@ class ClassBody(Body): pass
 class FunctionBody(Body): pass
 class TryBody(Body): pass
 class FinallyBody(Body):pass
+class CaseBody(Body): pass
 
 # --------- SESE Proxy Nodes --------- #
 
@@ -73,6 +74,8 @@ class ExitKind(Enum):
     FUNCTION_DEFINITION = auto()
     CLASS_DEFINITION = auto()
     FINALLY = auto()
+    MATCH = auto()
+    CASE = auto()
 
 class Exit(ast.AST):
     def __init__(self, kind: ExitKind):
@@ -102,3 +105,6 @@ class FinallyEntry(Entry):pass
 class FunctionDefinitionEntry(BranchEntry): pass
 
 class ClassDefinitionEntry(Entry): pass
+
+class MatchEntry(BranchEntry): pass
+class CaseEntry(Entry): pass

@@ -43,6 +43,7 @@ class ASTWalker():
         ast_wrappers.FinallyEntry: (ast_wrappers.FinallyBody),
         ast_wrappers.FunctionDefinitionEntry: (ast_wrappers.FunctionBody),
         ast_wrappers.ClassDefinitionEntry: (ast_wrappers.ClassBody),
+        ast_wrappers.CaseEntry: (ast_wrappers.CaseBody),
     }
     _EXIT_KIND_BY_ENTRY_TYPE = {
         ast_wrappers.ModuleEntry: (ast_wrappers.ExitKind.MODULE),
@@ -55,6 +56,7 @@ class ASTWalker():
         ast_wrappers.FinallyEntry: (ast_wrappers.ExitKind.FINALLY),
         ast_wrappers.FunctionDefinitionEntry: (ast_wrappers.ExitKind.FUNCTION_DEFINITION),
         ast_wrappers.ClassDefinitionEntry: (ast_wrappers.ExitKind.CLASS_DEFINITION),
+        ast_wrappers.CaseEntry: (ast_wrappers.ExitKind.CASE),
     }
 
     def _get_body_type(self, parent: ast.AST):
@@ -458,6 +460,81 @@ class ASTWalker():
                             skip.add((finally_entry, finally_tail))
                     l = r+1
                 
+                case ast.Match():
+                    if r > l:
+                        stmts = code_body[l:r]
+                        cfg_nodes.append([CustomBody(
+                            body=stmts,
+                            lineno=stmts[0].lineno,
+                            col_offset=stmts[0].col_offset,
+                            end_lineno=stmts[-1].end_lineno,
+                            end_col_offset=stmts[-1].end_col_offset,
+                        )])
+
+                    # match <subject>: the subject is evaluated once, before any case is tried
+                    subject = cur_node.subject
+                    match_entry = ast_wrappers.MatchEntry(
+                        body=[ast.Expr(
+                            value=subject,
+                            lineno=subject.lineno,
+                            col_offset=subject.col_offset,
+                            end_lineno=subject.end_lineno,
+                            end_col_offset=subject.end_col_offset,
+                        )],
+                        lineno=subject.lineno,
+                        col_offset=subject.col_offset,
+                        end_lineno=subject.end_lineno,
+                        end_col_offset=subject.end_col_offset,
+                    )
+                    cfg_nodes.append([match_entry])
+
+                    case_entries = []
+                    case_tails = []
+                    for case_node in cur_node.cases:
+                        # case ... if <guard>: the guard is the expr evaluated on entry to this case
+                        if case_node.guard is not None:
+                            guard = case_node.guard
+                            case_entry = ast_wrappers.CaseEntry(
+                                body=[ast.Expr(
+                                    value=guard,
+                                    lineno=guard.lineno,
+                                    col_offset=guard.col_offset,
+                                    end_lineno=guard.end_lineno,
+                                    end_col_offset=guard.end_col_offset,
+                                )],
+                                lineno=guard.lineno,
+                                col_offset=guard.col_offset,
+                                end_lineno=guard.end_lineno,
+                                end_col_offset=guard.end_col_offset,
+                            )
+                        else:
+                            pattern = case_node.pattern
+                            case_entry = ast_wrappers.CaseEntry(
+                                body=[],
+                                lineno=pattern.lineno,
+                                col_offset=pattern.col_offset,
+                                end_lineno=pattern.end_lineno,
+                                end_col_offset=pattern.end_col_offset,
+                            )
+
+                        case_body = ast_wrappers.CaseBody(
+                            body=case_node.body,
+                            lineno=case_node.body[0].lineno,
+                            col_offset=case_node.body[0].col_offset,
+                            end_lineno=case_node.body[-1].end_lineno,
+                            end_col_offset=case_node.body[-1].end_col_offset,
+                        )
+                        tail = self._parse(case_body, parent=case_entry)
+                        case_entries.append(case_entry)
+                        case_tails += tail
+
+                    cfg_nodes.append(case_entries)
+                    cfg_nodes.append(case_tails)
+                    for tail_node in case_tails:
+                        for entry_node in case_entries:
+                            skip.add((entry_node, tail_node))
+                    l = r+1
+
                 case ast.Return() | ast.Yield():
                     stmts = code_body[l:r+1]
                     cfg_nodes.append([CustomBody(

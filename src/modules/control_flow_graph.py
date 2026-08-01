@@ -33,6 +33,7 @@ class ExceptBodyNode(Node): pass
 class ForBodyNode(Node): pass
 class WhileBodyNode(Node): pass
 class FinallyBodyNode(Node): pass
+class CaseBodyNode(Node): pass
 
 class ControlFlowGraph():
     mapping= {
@@ -46,6 +47,7 @@ class ControlFlowGraph():
         ast_wrappers.ForLoopEntry: BranchEntryNode,
         ast_wrappers.WhileLoopEntry: BranchEntryNode,
         ast_wrappers.TryExceptBranchEntry: BranchEntryNode,
+        ast_wrappers.MatchEntry: BranchEntryNode,
         # Arm entry nodes - same region as their Body counterpart
         ast_wrappers.ModuleBody: ModuleBodyNode,
         ast_wrappers.IfEntry: IfBodyNode,
@@ -55,6 +57,7 @@ class ControlFlowGraph():
         ast_wrappers.TryEntry: TryBodyNode,
         ast_wrappers.ExceptEntry: ExceptBodyNode,
         ast_wrappers.FinallyEntry: FinallyBodyNode,
+        ast_wrappers.CaseEntry: CaseBodyNode,
         ast_wrappers.Body: ModuleBodyNode,
         ast_wrappers.FunctionBody: FunctionBody,
         ast_wrappers.ClassBody: ClassBodyNode,
@@ -65,6 +68,7 @@ class ControlFlowGraph():
         ast_wrappers.ForBody: ForBodyNode,
         ast_wrappers.WhileBody: WhileBodyNode,
         ast_wrappers.FinallyBody: FinallyBodyNode,
+        ast_wrappers.CaseBody: CaseBodyNode,
         ast_wrappers.Exit: ExitNode,
         }
 
