@@ -33,6 +33,9 @@ class ModuleAnalyzer():
                     q.append(v)  
         return
     
+    def analyze_code_block(self):
+        pass
+    
 if __name__=="__main__":
     module_analyzer = ModuleAnalyzer("tests/try_finally.py")
     module_analyzer.process_file()

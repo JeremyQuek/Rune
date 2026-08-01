@@ -1,7 +1,7 @@
 import ast
 from collections import defaultdict
 
-import ast_custom
+import ast_wrappers
 
 class Node():
     def __init__(self, block = None, enviroment = None):
@@ -36,21 +36,23 @@ class FinallyBodyNode(Node): pass
 class ControlFlowGraph():
     mapping= {
         ast.FunctionDef : FunctionDefinitionNode,
+        ast_wrappers.FunctionDefinitionEntry : FunctionDefinitionNode,
         ast.ClassDef : ClassDefinitionNode,
+        ast_wrappers.ClassDefinitionEntry : ClassDefinitionNode,
         ast.For: BranchEntryNode,
         ast.While: BranchEntryNode,
         ast.If: BranchEntryNode,
         ast.Try: BranchEntryNode,
-        ast_custom.Body: ModuleBodyNode,
-        ast_custom.FunctionBody: FunctionBody,
-        ast_custom.ClassBody: ClassBodyNode,
-        ast_custom.IfBody: IfBodyNode,
-        ast_custom.ElseBody: ElseBodyNode,
-        ast_custom.TryBody: TryBodyNode,
-        ast_custom.ExceptBody: ExceptBodyNode,
-        ast_custom.ForBody: ForBodyNode,
-        ast_custom.WhileBody: WhileBodyNode,
-        ast_custom.FinallyBody: FinallyBodyNode,
+        ast_wrappers.Body: ModuleBodyNode,
+        ast_wrappers.FunctionBody: FunctionBody,
+        ast_wrappers.ClassBody: ClassBodyNode,
+        ast_wrappers.IfBody: IfBodyNode,
+        ast_wrappers.ElseBody: ElseBodyNode,
+        ast_wrappers.TryBody: TryBodyNode,
+        ast_wrappers.ExceptBody: ExceptBodyNode,
+        ast_wrappers.ForBody: ForBodyNode,
+        ast_wrappers.WhileBody: WhileBodyNode,
+        ast_wrappers.FinallyBody: FinallyBodyNode,
         }
 
     def __init__(self):
@@ -119,33 +121,5 @@ class ControlFlowGraph():
         if isinstance(node, ModuleExitNode):
             return f"Exit({nid})"
         block = node.block
-        if isinstance(block, ast_custom.FinallyBody):
-            return f"FinallyBody({nid})"
-        if isinstance(block, ast_custom.IfBody):
-            return f"IfBody({nid})"
-        if isinstance(block, ast_custom.ElseBody):
-            return f"ElseBody({nid})"
-        if isinstance(block, ast_custom.FunctionBody):
-            return f"FuncBody({nid})"
-        if isinstance(block, ast_custom.ClassBody):
-            return f"ClassBody({nid})"
-        if isinstance(block, ast_custom.TryBody):
-            return f"TryBody({nid})"
-        if isinstance(block, ast_custom.ExceptBody):
-            return f"ExceptBody({nid})"
-        if isinstance(block, ast_custom.ForBody):
-            return f"ForBody({nid})"
-        if isinstance(block, ast_custom.WhileBody):
-            return f"WhileBody({nid})"
-        if isinstance(block, ast_custom.Body):
-            return f"Body({nid})"
-        if isinstance(block, ast.FunctionDef):
-            return f"FuncDef({nid})"
-        if isinstance(block, ast.ClassDef):
-            return f"ClassDef({nid})"
-        if isinstance(block, ast.If) or isinstance(block, ast.For) or isinstance(block, ast.While):
-            return f"Branch({nid})"
-        return f"Node({nid})"
-    
-
-
+        return block.__class__.__name__+ "(" + str(nid) + ")"
+       
