@@ -1,0 +1,27 @@
+{
+  "name": "rune-client",
+  "displayName": "Rune",
+  "description": "VS Code client for the Rune Python type analyzer",
+  "version": "0.0.1",
+  "publisher": "jeremyquek",
+  "private": true,
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "main": "./out/vscode_client.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "~1.82.0",
+    "typescript": "^5.4.0"
+  }
+}

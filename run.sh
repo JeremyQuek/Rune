@@ -1,1 +1,1 @@
-python3 src/modules/ast_walker.py
+python3 src/lsp_server/modules/ast_walker.py

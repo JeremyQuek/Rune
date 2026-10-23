@@ -2,7 +2,7 @@ import os
 import sys
 from io import StringIO
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "modules"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "lsp_server", "modules"))
 from control_flow_graph import ControlFlowGraph
 from ast_walker import ASTWalker
 
