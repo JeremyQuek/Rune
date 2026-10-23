@@ -3,12 +3,14 @@ import uuid
 from dataclasses import dataclass
 from typing import Literal
 
+from type_lattice import LatticeValue
+
 BUILTIN_SCOPE_ID = "builtins"
 
 @dataclass
 class SymbolTableEntry():
     id: str     # id of the scope this symbol belongs to
-    type: str
+    type: LatticeValue
 
 class Environment():
     """
@@ -17,7 +19,7 @@ class Environment():
     """
     def __init__(self):
         self.builtin = {
-            name: SymbolTableEntry(BUILTIN_SCOPE_ID, type(value).__name__)
+            name: SymbolTableEntry(BUILTIN_SCOPE_ID, LatticeValue.of(type(value).__name__))
             for name, value in vars(builtins).items()
         }
         self.scopes = []
@@ -31,7 +33,7 @@ class Environment():
     def pop_scope(self):
         return self.scopes.pop()
 
-    def assign(self, target: str, _type: str) -> SymbolTableEntry:
+    def assign(self, target: str, _type: LatticeValue) -> SymbolTableEntry:
         # Assignment always binds in the local (innermost) scope
         scope_id, symbol_table = self.scopes[-1]
         if target in symbol_table:
@@ -70,7 +72,7 @@ class Environment():
                 break
         else:
             scope_id, symbol_table = outer_tables[0]
-            entry = SymbolTableEntry(scope_id, "Unknown")
+            entry = SymbolTableEntry(scope_id, LatticeValue.unknown())
             symbol_table[target] = entry
 
         local_table[target] = entry
@@ -86,6 +88,6 @@ class Environment():
             return self.builtin[x]
         # Not found: declare it as Unknown in the innermost scope
         scope_id, symbol_table = self.scopes[-1]
-        entry = SymbolTableEntry(scope_id, "Unknown")
+        entry = SymbolTableEntry(scope_id, LatticeValue.unknown())
         symbol_table[x] = entry
         return entry
