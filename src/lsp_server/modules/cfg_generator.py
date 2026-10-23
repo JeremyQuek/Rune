@@ -4,25 +4,33 @@ from control_flow_graph import ControlFlowGraph
 
 """
 
-Scope context markers pushed onto scope_stack to track lexical scope during AST walking.
+Scope context management classes are pushed onto scope_stack to track lexical scope during AST descent.
 Used for validation (e.g. return must be inside a function, break inside a loop)
 and for connecting raise statements to their enclosing except handlers.
 
 """
-class ScopeContext():
-    def __repr__(self):
-        return self.__class__.__name__
 
-class TryCatchContext(ScopeContext):
+class IfElseContext(): 
+    def __repr__(self):
+            return self.__class__.__name__
+
+class TryCatchContext():
     def __init__(self, finally_entry = None):
         self.except_block = []
         self.finally_entry = finally_entry   # created up front so raises in the try can reach it
         self.raise_reaches_finally = False   # if set, the finally's tails keep propagating the raise
 
-class IfElseContext(ScopeContext): pass
-class FunctionContext(ScopeContext): pass
-class ClassContext(ScopeContext): pass
-class LoopContext(ScopeContext): pass
+class FunctionContext(): 
+    def __repr__(self):
+        return self.__class__.__name__
+    
+class ClassContext(): 
+    def __repr__(self):
+        return self.__class__.__name__
+    
+class LoopContext(): 
+    def __repr__(self):
+        return self.__class__.__name__
 
 
 class CFGGenerator():
