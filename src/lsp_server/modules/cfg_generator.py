@@ -1,5 +1,5 @@
 import ast
-import ast_wrappers
+import ast_node_wrappers
 from control_flow_graph import ControlFlowGraph
 
 """
@@ -23,40 +23,40 @@ class ClassContext(ScopeContext): pass
 class LoopContext(ScopeContext): pass
 
 
-class ASTWalker():
-    def __init__(self, ast: ast.AST, cfg: ControlFlowGraph,):
+class CFGGenerator():
+    def __init__(self, ast: ast.AST, cfg: ControlFlowGraph):
         self.cfg = cfg
         self.ast = ast
         self.scope_stack = []
     
-    def traverse_and_create_cfg(self):
-        self._parse(self.ast, ast_wrappers.ModuleEntry())
+    def make_graph(self):
+        self._dfs(self.ast, ast_node_wrappers.ModuleEntry())
 
     _BODY_KIND_BY_ENTRY_TYPE = {
-        ast_wrappers.ModuleEntry: (ast_wrappers.ModuleBody),
-        ast_wrappers.IfEntry: (ast_wrappers.IfBody),
-        ast_wrappers.ElseEntry: (ast_wrappers.ElseBody),
-        ast_wrappers.ForEntry: (ast_wrappers.ForBody),
-        ast_wrappers.WhileEntry: (ast_wrappers.WhileBody),
-        ast_wrappers.TryEntry: (ast_wrappers.TryBody),
-        ast_wrappers.ExceptEntry: (ast_wrappers.ExceptBody),
-        ast_wrappers.FinallyEntry: (ast_wrappers.FinallyBody),
-        ast_wrappers.FunctionDefinitionEntry: (ast_wrappers.FunctionBody),
-        ast_wrappers.ClassDefinitionEntry: (ast_wrappers.ClassBody),
-        ast_wrappers.CaseEntry: (ast_wrappers.CaseBody),
+        ast_node_wrappers.ModuleEntry: (ast_node_wrappers.ModuleBody),
+        ast_node_wrappers.IfEntry: (ast_node_wrappers.IfBody),
+        ast_node_wrappers.ElseEntry: (ast_node_wrappers.ElseBody),
+        ast_node_wrappers.ForEntry: (ast_node_wrappers.ForBody),
+        ast_node_wrappers.WhileEntry: (ast_node_wrappers.WhileBody),
+        ast_node_wrappers.TryEntry: (ast_node_wrappers.TryBody),
+        ast_node_wrappers.ExceptEntry: (ast_node_wrappers.ExceptBody),
+        ast_node_wrappers.FinallyEntry: (ast_node_wrappers.FinallyBody),
+        ast_node_wrappers.FunctionDefinitionEntry: (ast_node_wrappers.FunctionBody),
+        ast_node_wrappers.ClassDefinitionEntry: (ast_node_wrappers.ClassBody),
+        ast_node_wrappers.CaseEntry: (ast_node_wrappers.CaseBody),
     }
     _EXIT_KIND_BY_ENTRY_TYPE = {
-        ast_wrappers.ModuleEntry: (ast_wrappers.ExitKind.MODULE),
-        ast_wrappers.IfEntry: (ast_wrappers.ExitKind.IF),
-        ast_wrappers.ElseEntry: (ast_wrappers.ExitKind.ELSE),
-        ast_wrappers.ForEntry: (ast_wrappers.ExitKind.FOR),
-        ast_wrappers.WhileEntry: (ast_wrappers.ExitKind.WHILE),
-        ast_wrappers.TryEntry: (ast_wrappers.ExitKind.TRY),
-        ast_wrappers.ExceptEntry: (ast_wrappers.ExitKind.EXCEPT),
-        ast_wrappers.FinallyEntry: (ast_wrappers.ExitKind.FINALLY),
-        ast_wrappers.FunctionDefinitionEntry: (ast_wrappers.ExitKind.FUNCTION_DEFINITION),
-        ast_wrappers.ClassDefinitionEntry: (ast_wrappers.ExitKind.CLASS_DEFINITION),
-        ast_wrappers.CaseEntry: (ast_wrappers.ExitKind.CASE),
+        ast_node_wrappers.ModuleEntry: (ast_node_wrappers.ExitKind.MODULE),
+        ast_node_wrappers.IfEntry: (ast_node_wrappers.ExitKind.IF),
+        ast_node_wrappers.ElseEntry: (ast_node_wrappers.ExitKind.ELSE),
+        ast_node_wrappers.ForEntry: (ast_node_wrappers.ExitKind.FOR),
+        ast_node_wrappers.WhileEntry: (ast_node_wrappers.ExitKind.WHILE),
+        ast_node_wrappers.TryEntry: (ast_node_wrappers.ExitKind.TRY),
+        ast_node_wrappers.ExceptEntry: (ast_node_wrappers.ExitKind.EXCEPT),
+        ast_node_wrappers.FinallyEntry: (ast_node_wrappers.ExitKind.FINALLY),
+        ast_node_wrappers.FunctionDefinitionEntry: (ast_node_wrappers.ExitKind.FUNCTION_DEFINITION),
+        ast_node_wrappers.ClassDefinitionEntry: (ast_node_wrappers.ExitKind.CLASS_DEFINITION),
+        ast_node_wrappers.CaseEntry: (ast_node_wrappers.ExitKind.CASE),
     }
 
     def _get_body_type(self, parent: ast.AST):
@@ -74,7 +74,7 @@ class ASTWalker():
             end_col_offset=stmts[-1].end_col_offset,
         )
 
-    def _parse(self, ast_node: ast.AST, parent: ast.AST | None = None):
+    def _dfs(self, ast_node: ast.AST, parent: ast.AST | None = None):
         """
         Recursively decomposes a code region into CFG layers, returning its exit frontier.
 
@@ -100,7 +100,7 @@ class ASTWalker():
         - Class def: rejoin it (class body executes immediately)
         - Control flow: collect if_tail + else_tail as the combined frontier
  f
-        This is why the recursion generalizes cleanly. _parse() never needs to know whether
+        This is why the recursion generalizes cleanly. _dfs() never needs to know whether
         its child was a while, an if, or a nested class. It simply asks "where are your
         exits?" and composes them into the enclosing graph.
         """
@@ -145,7 +145,7 @@ class ASTWalker():
                     )
 
                     # Add the proxy node with this definition
-                    func_entry = ast_wrappers.FunctionDefinitionEntry(
+                    func_entry = ast_node_wrappers.FunctionDefinitionEntry(
                         body=[func_assign],
                         lineno=func_assign.lineno,
                         col_offset=func_assign.col_offset,
@@ -155,7 +155,7 @@ class ASTWalker():
 
                     cfg_nodes.append([func_entry])
 
-                    func_body = ast_wrappers.FunctionBody(
+                    func_body = ast_node_wrappers.FunctionBody(
                         body=cur_node.body,
                         lineno=cur_node.body[0].lineno,
                         col_offset=cur_node.body[0].col_offset,
@@ -164,7 +164,7 @@ class ASTWalker():
                     )
 
                     self.scope_stack.append(FunctionContext())
-                    self._parse(func_body, parent=func_entry)
+                    self._dfs(func_body, parent=func_entry)
                     self.scope_stack.pop()
 
                     l = r+1
@@ -198,7 +198,7 @@ class ASTWalker():
                     )
                     
                     # Add the proxy node with this assignment
-                    class_entry = ast_wrappers.ClassDefinitionEntry(
+                    class_entry = ast_node_wrappers.ClassDefinitionEntry(
                         body=[class_assign],
                         lineno=class_assign.lineno,
                         col_offset=class_assign.col_offset,
@@ -208,7 +208,7 @@ class ASTWalker():
 
 
                     cfg_nodes.append([class_entry])
-                    class_body = ast_wrappers.ClassBody(
+                    class_body = ast_node_wrappers.ClassBody(
                         body=cur_node.body,
                         lineno=cur_node.body[0].lineno,
                         col_offset=cur_node.body[0].col_offset,
@@ -217,7 +217,7 @@ class ASTWalker():
                     )
 
                     self.scope_stack.append(ClassContext())
-                    tail = self._parse(class_body, parent=class_entry)
+                    tail = self._dfs(class_body, parent=class_entry)
                     self.scope_stack.pop()
 
                     cfg_nodes.append(tail)
@@ -237,23 +237,23 @@ class ASTWalker():
                             end_col_offset=stmts[-1].end_col_offset,
                         )])
                     
-                    if_else_entry = ast_wrappers.IfElseEntry()
+                    if_else_entry = ast_node_wrappers.IfElseEntry()
                     cfg_nodes.append([if_else_entry])
 
                     self.scope_stack.append(IfElseContext())
-                    if_entry = ast_wrappers.IfEntry()
-                    if_body = ast_wrappers.IfBody(
+                    if_entry = ast_node_wrappers.IfEntry()
+                    if_body = ast_node_wrappers.IfBody(
                         body=cur_node.body,
                         lineno=cur_node.body[0].lineno,
                         col_offset=cur_node.body[0].col_offset,
                         end_lineno=cur_node.body[-1].end_lineno,
                         end_col_offset=cur_node.body[-1].end_col_offset,
                     )
-                    if_tail = self._parse(if_body, parent=if_entry)
+                    if_tail = self._dfs(if_body, parent=if_entry)
 
-                    else_entry = ast_wrappers.ElseEntry()
+                    else_entry = ast_node_wrappers.ElseEntry()
                     if cur_node.orelse:
-                        else_body = ast_wrappers.ElseBody(
+                        else_body = ast_node_wrappers.ElseBody(
                             body=cur_node.orelse,
                             lineno=cur_node.orelse[0].lineno,
                             col_offset=cur_node.orelse[0].col_offset,
@@ -262,8 +262,8 @@ class ASTWalker():
                         )
                     else:
                         # the dummy node inside gets returned
-                        else_body = ast_wrappers.ElseBody(body=[ast_wrappers.ElseBody()])
-                    else_tail = self._parse(else_body, parent=else_entry)
+                        else_body = ast_node_wrappers.ElseBody(body=[ast_node_wrappers.ElseBody()])
+                    else_tail = self._dfs(else_body, parent=else_entry)
                     self.scope_stack.pop()
 
                     cfg_nodes.append([if_entry, else_entry])
@@ -285,23 +285,23 @@ class ASTWalker():
                             end_col_offset=stmts[-1].end_col_offset,
                         )])
                     
-                    while_loop_entry = ast_wrappers.WhileLoopEntry()
+                    while_loop_entry = ast_node_wrappers.WhileLoopEntry()
                     cfg_nodes.append([while_loop_entry])
 
                     self.scope_stack.append(LoopContext())
-                    while_entry = ast_wrappers.WhileEntry()
-                    while_body = ast_wrappers.WhileBody(
+                    while_entry = ast_node_wrappers.WhileEntry()
+                    while_body = ast_node_wrappers.WhileBody(
                         body=cur_node.body,
                         lineno=cur_node.body[0].lineno,
                         col_offset=cur_node.body[0].col_offset,
                         end_lineno=cur_node.body[-1].end_lineno,
                         end_col_offset=cur_node.body[-1].end_col_offset,
                     )
-                    while_tail = self._parse(while_body, parent=while_entry)
+                    while_tail = self._dfs(while_body, parent=while_entry)
 
-                    else_entry = ast_wrappers.ElseEntry()
-                    else_body = ast_wrappers.ElseBody(body=[ast_wrappers.ElseBody()])
-                    else_tail = self._parse(else_body, parent=else_entry)
+                    else_entry = ast_node_wrappers.ElseEntry()
+                    else_body = ast_node_wrappers.ElseBody(body=[ast_node_wrappers.ElseBody()])
+                    else_tail = self._dfs(else_body, parent=else_entry)
                     self.scope_stack.pop()
 
                     cfg_nodes.append([while_entry,else_entry])
@@ -323,7 +323,7 @@ class ASTWalker():
                             end_col_offset=stmts[-1].end_col_offset,
                         )])
                     
-                    for_loop_entry = ast_wrappers.ForLoopEntry()
+                    for_loop_entry = ast_node_wrappers.ForLoopEntry()
                     cfg_nodes.append([for_loop_entry])
 
                     self.scope_stack.append(LoopContext())
@@ -337,25 +337,25 @@ class ASTWalker():
                         end_lineno=cur_node.iter.end_lineno,
                         end_col_offset=cur_node.iter.end_col_offset,
                     )
-                    for_entry = ast_wrappers.ForEntry(
+                    for_entry = ast_node_wrappers.ForEntry(
                         body=[for_assign],
                         lineno=for_assign.lineno,
                         col_offset=for_assign.col_offset,
                         end_lineno=for_assign.end_lineno,
                         end_col_offset=for_assign.end_col_offset,
                     )
-                    for_body = ast_wrappers.ForBody(
+                    for_body = ast_node_wrappers.ForBody(
                         body=cur_node.body,
                         lineno=cur_node.body[0].lineno,
                         col_offset=cur_node.body[0].col_offset,
                         end_lineno=cur_node.body[-1].end_lineno,
                         end_col_offset=cur_node.body[-1].end_col_offset,
                     )
-                    for_tail = self._parse(for_body, parent=for_entry)
+                    for_tail = self._dfs(for_body, parent=for_entry)
 
-                    else_entry = ast_wrappers.ElseEntry()
-                    else_body = ast_wrappers.ElseBody(body=[ast_wrappers.ElseBody()])
-                    else_tail = self._parse(else_body, parent=else_entry)
+                    else_entry = ast_node_wrappers.ElseEntry()
+                    else_body = ast_node_wrappers.ElseBody(body=[ast_node_wrappers.ElseBody()])
+                    else_tail = self._dfs(else_body, parent=else_entry)
                     self.scope_stack.pop()
 
                     cfg_nodes.append([for_entry, else_entry])
@@ -377,16 +377,18 @@ class ASTWalker():
                             end_col_offset=stmts[-1].end_col_offset,
                         )])
                     
-                    try_except_entry = ast_wrappers.TryExceptBranchEntry()
+                    try_except_entry = ast_node_wrappers.TryExceptBranchEntry()
                     cfg_nodes.append([try_except_entry])
 
+                    # Only the try body runs inside this context. Handlers are parsed
+                    # outside it, so a raise in an except body propagates outward instead
+                    # of being caught by its sibling handlers.
                     try_catch_context = TryCatchContext()
-                    self.scope_stack.append(try_catch_context)
                     try_except_tails = []
                     try_except_entries = []
                     for handler in cur_node.handlers:
-                        except_entry = ast_wrappers.ExceptEntry()
-                        except_body = ast_wrappers.ExceptBody(
+                        except_entry = ast_node_wrappers.ExceptEntry()
+                        except_body = ast_node_wrappers.ExceptBody(
                             body=handler.body,
                             lineno=handler.body[0].lineno,
                             col_offset=handler.body[0].col_offset,
@@ -395,7 +397,6 @@ class ASTWalker():
                         )
                         
                         # Ensure its not a bare except
-                        # TODO handle ast.Attribute
                         if handler.name:
                             exception_assignment_node = ast.Assign(
                                 targets=[ast.Name(
@@ -414,26 +415,26 @@ class ASTWalker():
                             )
                             except_body.body.insert(0, exception_assignment_node)
 
-                        new_tails=self._parse(except_body, parent=except_entry)
+                        new_tails=self._dfs(except_body, parent=except_entry)
                         try_except_tails +=new_tails
                         try_except_entries.append(except_entry)
 
-                        # Store (exception_type, node_ref)
-                        scope_info = self.scope_stack[-1]
-                        if handler.type: scope_info.except_block.append((handler.type.id, except_entry))  
-                        else: scope_info.except_block.append(("", except_entry)) 
+                        # Store (handler, node_ref). The handler is kept unresolved so
+                        # the type layer can inspect handler.type when pruning raise edges.
+                        try_catch_context.except_block.append((handler, except_entry))
 
-                    try_entry = ast_wrappers.TryEntry()
-                    try_body = ast_wrappers.TryBody(
+                    try_entry = ast_node_wrappers.TryEntry()
+                    try_body = ast_node_wrappers.TryBody(
                         body=cur_node.body,
                         lineno=cur_node.body[0].lineno,
                         col_offset=cur_node.body[0].col_offset,
                         end_lineno=cur_node.body[-1].end_lineno,
                         end_col_offset=cur_node.body[-1].end_col_offset,
                     ) 
-                    try_tail = self._parse(try_body, parent=try_entry)
-                    try_except_entries.append(try_entry)
+                    self.scope_stack.append(try_catch_context)
+                    try_tail = self._dfs(try_body, parent=try_entry)
                     self.scope_stack.pop()
+                    try_except_entries.append(try_entry)
 
                     cfg_nodes.append(try_except_entries)
                     try_except_tails+=try_tail
@@ -444,9 +445,9 @@ class ASTWalker():
                             skip.add((entry_node, tail_node))
 
                     if cur_node.finalbody:
-                        finally_entry = ast_wrappers.FinallyEntry()
+                        finally_entry = ast_node_wrappers.FinallyEntry()
                         cfg_nodes.append([finally_entry])
-                        finally_body = ast_wrappers.FinallyBody(
+                        finally_body = ast_node_wrappers.FinallyBody(
                             body=cur_node.finalbody,
                             lineno=stmts[0].lineno,
                             col_offset=stmts[0].col_offset,
@@ -454,7 +455,7 @@ class ASTWalker():
                             end_col_offset=stmts[-1].end_col_offset,
                         )
                         # All the tails of the try_except_block point to the finally's first block
-                        finally_tails = self._parse(finally_body, finally_entry)
+                        finally_tails = self._dfs(finally_body, finally_entry)
                         cfg_nodes.append(finally_tails)
                         for finally_tail in finally_tails:
                             skip.add((finally_entry, finally_tail))
@@ -473,7 +474,7 @@ class ASTWalker():
 
                     # match <subject>: the subject is evaluated once, before any case is tried
                     subject = cur_node.subject
-                    match_entry = ast_wrappers.MatchEntry(
+                    match_entry = ast_node_wrappers.MatchEntry(
                         body=[ast.Expr(
                             value=subject,
                             lineno=subject.lineno,
@@ -494,7 +495,7 @@ class ASTWalker():
                         # case ... if <guard>: the guard is the expr evaluated on entry to this case
                         if case_node.guard is not None:
                             guard = case_node.guard
-                            case_entry = ast_wrappers.CaseEntry(
+                            case_entry = ast_node_wrappers.CaseEntry(
                                 body=[ast.Expr(
                                     value=guard,
                                     lineno=guard.lineno,
@@ -509,7 +510,7 @@ class ASTWalker():
                             )
                         else:
                             pattern = case_node.pattern
-                            case_entry = ast_wrappers.CaseEntry(
+                            case_entry = ast_node_wrappers.CaseEntry(
                                 body=[],
                                 lineno=pattern.lineno,
                                 col_offset=pattern.col_offset,
@@ -517,14 +518,14 @@ class ASTWalker():
                                 end_col_offset=pattern.end_col_offset,
                             )
 
-                        case_body = ast_wrappers.CaseBody(
+                        case_body = ast_node_wrappers.CaseBody(
                             body=case_node.body,
                             lineno=case_node.body[0].lineno,
                             col_offset=case_node.body[0].col_offset,
                             end_lineno=case_node.body[-1].end_lineno,
                             end_col_offset=case_node.body[-1].end_col_offset,
                         )
-                        tail = self._parse(case_body, parent=case_entry)
+                        tail = self._dfs(case_body, parent=case_entry)
                         case_entries.append(case_entry)
                         case_tails += tail
 
@@ -577,7 +578,6 @@ class ASTWalker():
                 
                 case ast.Raise():
                     stmts = code_body[l:r+1]
-                    cur_stmt = code_body[r]
                     cur_node = CustomBody(
                         body=stmts,
                         lineno=stmts[0].lineno,
@@ -586,19 +586,36 @@ class ASTWalker():
                         end_col_offset=stmts[-1].end_col_offset,
                     )
                     cfg_nodes.append([cur_node])
-           
-                    # TODO raise type = ast.Attribute
-                    # Search for handlers within the nearest local scope
+
+                    """
+                    Link the raise to EVERY handler of EVERY enclosing try (over-approximation).
+                    
+                    Deciding which handler actually catches a raise is a type question,
+                    not a control flow one, so the CFG doesn't try to answer it:
+                      - raise ValueError("msg")   -> exc is a Call, the class is in .func
+                      - raise errors.MyErr        -> exc is an Attribute, so which module's MyErr?
+                      - bare `raise`              -> re-raises whatever is currently being handled
+                      - except (A, B)             -> a Tuple of classes, each needing resolution
+                      - subclasses                -> `except LookupError` catches KeyError, and
+                                                     `class MyErr(ValueError)` needs its bases resolved
+                    Even a plain `raise ValueError` is a guess, since the name may be shadowed.
+                    
+                    So the CFG keeps every edge that COULD happen, the same way it keeps both
+                    arms of an if. The type layer later ignores the edges that can't happen
+                    (it reaches the raise before its handlers in topological order). Edges are
+                    only ever removed after this point, never added.
+                    """
+                    
                     for i in range(len(self.scope_stack)-1, -1, -1):
+                        # Stop at the function boundary: a function body's raise propagates to its
+                        # call site, not to the try blocks lexically around the def
                         if isinstance(self.scope_stack[i], FunctionContext):
                             break
 
                         if isinstance(self.scope_stack[i], TryCatchContext):
-                            for (exception_type, exception_entry) in self.scope_stack[i].except_block:
-                                if cur_stmt.exc.id==exception_type or exception_type=="":
-                                    self.cfg.insert(cur_node, exception_entry)
-                                    break
-
+                            for (handler, exception_entry) in self.scope_stack[i].except_block:
+                                self.cfg.insert(cur_node, exception_entry)
+                    
                     l=r+1
                     break
 
@@ -612,7 +629,7 @@ class ASTWalker():
                 end_col_offset=stmts[-1].end_col_offset,
             )])
         
-        exit_node = ast_wrappers.Exit(kind =  self._get_exit_kind(parent))
+        exit_node = ast_node_wrappers.Exit(kind =  self._get_exit_kind(parent))
         cfg_nodes.append([exit_node])
         # Step 2 insert the edges
         for i in range(len(cfg_nodes)-1):
@@ -626,8 +643,11 @@ class ASTWalker():
         
 
 if __name__ == "__main__":
+    with open("tests/cfg_graph_test_cases/try_catch.py", "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+
     cfg = ControlFlowGraph()
-    walker = ASTWalker(cfg, "tests/try_catch.py")
-    walker.traverse_ast_for_cfg()
-    walker.cfg._pretty_print()
+    generator = CFGGenerator(tree, cfg)
+    generator.make_graph()
+    cfg._pretty_print()
 

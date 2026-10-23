@@ -96,6 +96,6 @@ def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
 
 
 if __name__ == "__main__":
-    with open("tests/linear.py", "r", encoding="utf-8") as f:
+    with open("tests/cfg_graph_test_cases/linear.py", "r", encoding="utf-8") as f:
         for (col, line), entry in analyze(f.read()).items():
             print(f"line {line}, col {col}: {entry.type}  <- {entry.code}")

@@ -1,79 +1,85 @@
 import ast
 from collections import defaultdict
+from enum import Enum, auto
 
-import ast_wrappers
+import ast_node_wrappers
+
+class NodeType(Enum):
+    MODULE_ENTRY = auto()
+    BRANCH_ENTRY = auto()
+    FUNCTION_DEFINITION = auto()
+    CLASS_DEFINITION = auto()
+    EXIT = auto()
+    MODULE_BODY = auto()
+    FUNCTION_BODY = auto()
+    CLASS_BODY = auto()
+    IF_BODY = auto()
+    ELSE_BODY = auto()
+    TRY_BODY = auto()
+    EXCEPT_BODY = auto()
+    FOR_BODY = auto()
+    WHILE_BODY = auto()
+    FINALLY_BODY = auto()
+    CASE_BODY = auto()
+
+# Boundary nodes mark where the lexical environment changes shape:
+# a new scope starts (module, function) or gets cloned per branch.
+BOUNDARY_TYPES = {
+    NodeType.MODULE_ENTRY,
+    NodeType.BRANCH_ENTRY,
+    NodeType.FUNCTION_DEFINITION,
+}
 
 class Node():
-    def __init__(self, block = None, enviroment = None):
-        self.block = block
+    def __init__(self, node_type: NodeType, is_boundary: bool = False, ast_node = None, enviroment = None):
+        self.node_type = node_type
+        self.ast_node = ast_node
+        self.is_boundary = is_boundary
         self.enviroment = enviroment
         self.next = []
 
     def __repr__(self):
-        return self.__class__.__name__
-
-# Special Nodes: Terminal Nodes Represent enviromental boundary nodesß
-class TerminalNode(Node): pass
-
-class ModuleEntryNode(TerminalNode): pass
-class ModuleExitNode(TerminalNode):pass
-class BranchEntryNode(TerminalNode): pass # - This needs to handle for!
-class FunctionDefinitionNode(TerminalNode): pass # - This needs to handle function definition
-class ClassDefinitionNode(Node): pass
-class ExitNode(Node): pass
-
-# Regular code nodes
-class ModuleBodyNode(Node):pass
-class FunctionBody(Node): pass
-class ClassBodyNode(Node): pass
-class IfBodyNode(Node): pass
-class ElseBodyNode(Node): pass
-class TryBodyNode(Node): pass
-class ExceptBodyNode(Node): pass
-class ForBodyNode(Node): pass
-class WhileBodyNode(Node): pass
-class FinallyBodyNode(Node): pass
-class CaseBodyNode(Node): pass
+        return self.node_type.name
 
 class ControlFlowGraph():
     mapping= {
-        ast.FunctionDef : FunctionDefinitionNode,
-        ast_wrappers.FunctionDefinitionEntry : FunctionDefinitionNode,
-        ast.ClassDef : ClassDefinitionNode,
-        ast_wrappers.ClassDefinitionEntry : ClassDefinitionNode,
-        ast_wrappers.ModuleEntry: ModuleEntryNode,
+        ast.FunctionDef : NodeType.FUNCTION_DEFINITION,
+        ast_node_wrappers.FunctionDefinitionEntry : NodeType.FUNCTION_DEFINITION,
+        ast.ClassDef : NodeType.CLASS_DEFINITION,
+        ast_node_wrappers.ClassDefinitionEntry : NodeType.CLASS_DEFINITION,
+        ast_node_wrappers.ModuleEntry: NodeType.MODULE_ENTRY,
         # Branch decision nodes
-        ast_wrappers.IfElseEntry: BranchEntryNode,
-        ast_wrappers.ForLoopEntry: BranchEntryNode,
-        ast_wrappers.WhileLoopEntry: BranchEntryNode,
-        ast_wrappers.TryExceptBranchEntry: BranchEntryNode,
-        ast_wrappers.MatchEntry: BranchEntryNode,
+        ast_node_wrappers.IfElseEntry: NodeType.BRANCH_ENTRY,
+        ast_node_wrappers.ForLoopEntry: NodeType.BRANCH_ENTRY,
+        ast_node_wrappers.WhileLoopEntry: NodeType.BRANCH_ENTRY,
+        ast_node_wrappers.TryExceptBranchEntry: NodeType.BRANCH_ENTRY,
+        ast_node_wrappers.MatchEntry: NodeType.BRANCH_ENTRY,
         # Arm entry nodes - same region as their Body counterpart
-        ast_wrappers.ModuleBody: ModuleBodyNode,
-        ast_wrappers.IfEntry: IfBodyNode,
-        ast_wrappers.ElseEntry: ElseBodyNode,
-        ast_wrappers.ForEntry: ForBodyNode,
-        ast_wrappers.WhileEntry: WhileBodyNode,
-        ast_wrappers.TryEntry: TryBodyNode,
-        ast_wrappers.ExceptEntry: ExceptBodyNode,
-        ast_wrappers.FinallyEntry: FinallyBodyNode,
-        ast_wrappers.CaseEntry: CaseBodyNode,
-        ast_wrappers.Body: ModuleBodyNode,
-        ast_wrappers.FunctionBody: FunctionBody,
-        ast_wrappers.ClassBody: ClassBodyNode,
-        ast_wrappers.IfBody: IfBodyNode,
-        ast_wrappers.ElseBody: ElseBodyNode,
-        ast_wrappers.TryBody: TryBodyNode,
-        ast_wrappers.ExceptBody: ExceptBodyNode,
-        ast_wrappers.ForBody: ForBodyNode,
-        ast_wrappers.WhileBody: WhileBodyNode,
-        ast_wrappers.FinallyBody: FinallyBodyNode,
-        ast_wrappers.CaseBody: CaseBodyNode,
-        ast_wrappers.Exit: ExitNode,
+        ast_node_wrappers.ModuleBody: NodeType.MODULE_BODY,
+        ast_node_wrappers.IfEntry: NodeType.IF_BODY,
+        ast_node_wrappers.ElseEntry: NodeType.ELSE_BODY,
+        ast_node_wrappers.ForEntry: NodeType.FOR_BODY,
+        ast_node_wrappers.WhileEntry: NodeType.WHILE_BODY,
+        ast_node_wrappers.TryEntry: NodeType.TRY_BODY,
+        ast_node_wrappers.ExceptEntry: NodeType.EXCEPT_BODY,
+        ast_node_wrappers.FinallyEntry: NodeType.FINALLY_BODY,
+        ast_node_wrappers.CaseEntry: NodeType.CASE_BODY,
+        ast_node_wrappers.Body: NodeType.MODULE_BODY,
+        ast_node_wrappers.FunctionBody: NodeType.FUNCTION_BODY,
+        ast_node_wrappers.ClassBody: NodeType.CLASS_BODY,
+        ast_node_wrappers.IfBody: NodeType.IF_BODY,
+        ast_node_wrappers.ElseBody: NodeType.ELSE_BODY,
+        ast_node_wrappers.TryBody: NodeType.TRY_BODY,
+        ast_node_wrappers.ExceptBody: NodeType.EXCEPT_BODY,
+        ast_node_wrappers.ForBody: NodeType.FOR_BODY,
+        ast_node_wrappers.WhileBody: NodeType.WHILE_BODY,
+        ast_node_wrappers.FinallyBody: NodeType.FINALLY_BODY,
+        ast_node_wrappers.CaseBody: NodeType.CASE_BODY,
+        ast_node_wrappers.Exit: NodeType.EXIT,
         }
 
     def __init__(self):
-        self.entry = ModuleEntryNode()
+        self.entry = Node(NodeType.MODULE_ENTRY, is_boundary=True)
         self.nodes = {self.entry: self.entry}
         self.edges=[]
         self.adj = defaultdict(list)
@@ -109,11 +115,10 @@ class ControlFlowGraph():
             u = self.nodes[ast_node]
         return u
 
-    # returns the correct Node Type,
+    # returns a Node of the correct type
     def _create_node(self, ast_node: ast.AST) -> Node:
-        ast_type = type(ast_node)
-        node_class = self.mapping[ast_type]
-        node = node_class(block=ast_node)
+        node_type = self.mapping[type(ast_node)]
+        node = Node(node_type, is_boundary=node_type in BOUNDARY_TYPES, ast_node=ast_node)
 
         # For pretty print
         self._id_counter += 1
@@ -131,9 +136,9 @@ class ControlFlowGraph():
 
     def _label(self, node: Node) -> str:
         nid = self._node_ids[id(node)]
-        if node.block is None:
+        if node.ast_node is None:
             return f"Entry({nid})"
-        if isinstance(node, ExitNode):
-            return f"{''.join(word.capitalize() for word in node.block.kind.name.split('_'))}Exit({nid})"
-        return node.block.__class__.__name__ + f"({nid})"
+        if node.node_type == NodeType.EXIT:
+            return f"{''.join(word.capitalize() for word in node.ast_node.kind.name.split('_'))}Exit({nid})"
+        return node.ast_node.__class__.__name__ + f"({nid})"
        

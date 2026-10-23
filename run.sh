@@ -1,1 +1,0 @@
-python3 src/lsp_server/modules/ast_walker.py

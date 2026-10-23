@@ -1,12 +1,13 @@
+import ast
 import os
 import sys
 from io import StringIO
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "lsp_server", "modules"))
 from control_flow_graph import ControlFlowGraph
-from ast_walker import ASTWalker
+from cfg_generator import CFGGenerator
 
-TESTS_DIR = os.path.dirname(__file__)
+TESTS_DIR = os.path.join(os.path.dirname(__file__), "cfg_graph_test_cases")
 
 def get_test_cases():
     cases = []
@@ -21,8 +22,10 @@ def get_test_cases():
 
 def run_walker(py_file):
     cfg = ControlFlowGraph()
-    walker = ASTWalker(cfg, py_file)
-    walker.traverse_ast_for_cfg()
+    with open(py_file, "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    walker = CFGGenerator(tree, cfg)
+    walker.make_graph()
     buf = StringIO()
     old_stdout = sys.stdout
     sys.stdout = buf

@@ -1,0 +1,1 @@
+python3 src/lsp_server/modules/cfg_generator.py
