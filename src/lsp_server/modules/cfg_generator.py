@@ -14,8 +14,10 @@ class ScopeContext():
         return self.__class__.__name__
 
 class TryCatchContext(ScopeContext):
-    def __init__(self):
+    def __init__(self, finally_entry = None):
         self.except_block = []
+        self.finally_entry = finally_entry   # created up front so raises in the try can reach it
+        self.raise_reaches_finally = False   # if set, the finally's tails keep propagating the raise
 
 class IfElseContext(ScopeContext): pass
 class FunctionContext(ScopeContext): pass
@@ -64,6 +66,50 @@ class CFGGenerator():
 
     def _get_exit_kind(self, parent: ast.AST):
         return self._EXIT_KIND_BY_ENTRY_TYPE[type(parent)]
+
+    def _link_raise(self, node: ast.AST):
+        """
+        Links a raising node to wherever its exception could go next, walking outward:
+        every handler of each enclosing try, then that try's finally if it has one.
+
+        A finally stops the walk: an uncaught exception runs the finally first, and the
+        finally's tails carry it further outward (see the Try case).
+
+        Where a raise goes, depending on where it sits in a try:
+
+        1. Raise in the try body (scope_stack has try_catch_context: handlers + finally)
+           - with finally:    -> every handler of this try + this try's finally, stop
+           - without finally: -> every handler of this try, then keep walking outward
+                                 to the enclosing try's handlers (+ its finally) ...
+
+        2. Raise in an except body (scope_stack has handler_context: no handlers, so
+           sibling handlers are never linked)
+           - with finally:    -> this try's finally only, stop
+           - without finally: -> nothing at this level, keep walking outward
+                                 to the enclosing try's handlers (+ its finally) ...
+
+        3. Raise in the finally body (this try's contexts are already popped)
+           -> straight to the enclosing try's handlers (+ its finally) ...
+
+        Separately, if any raise reached a finally, that finally's tails are passed
+        through here too, so the exception continues outward once the finally has run.
+        The walk always stops at a function boundary.
+        """
+        for i in range(len(self.scope_stack)-1, -1, -1):
+            # Stop at the function boundary: a function body's raise propagates to its
+            # call site, not to the try blocks lexically around the def
+            if isinstance(self.scope_stack[i], FunctionContext):
+                break
+
+            if isinstance(self.scope_stack[i], TryCatchContext):
+                try_catch_context = self.scope_stack[i]
+                for (_, exception_entry) in try_catch_context.except_block:
+                    self.cfg.insert(node, exception_entry)
+
+                if try_catch_context.finally_entry is not None:
+                    self.cfg.insert(node, try_catch_context.finally_entry)
+                    try_catch_context.raise_reaches_finally = True
+                    break
 
     def _create_body(self, stmts: list[ast.AST], body_type: ast.AST) -> ast.AST:
         return body_type(
@@ -383,7 +429,11 @@ class CFGGenerator():
                     # Only the try body runs inside this context. Handlers are parsed
                     # outside it, so a raise in an except body propagates outward instead
                     # of being caught by its sibling handlers.
-                    try_catch_context = TryCatchContext()
+                    finally_entry = ast_node_wrappers.FinallyEntry() if cur_node.finalbody else None
+                    try_catch_context = TryCatchContext(finally_entry)
+                    # Handler bodies don't see their siblings, but a raise inside one
+                    # still runs this try's finally before propagating outward.
+                    handler_context = TryCatchContext(finally_entry)
                     try_except_tails = []
                     try_except_entries = []
                     for handler in cur_node.handlers:
@@ -415,7 +465,9 @@ class CFGGenerator():
                             )
                             except_body.body.insert(0, exception_assignment_node)
 
+                        self.scope_stack.append(handler_context)
                         new_tails=self._dfs(except_body, parent=except_entry)
+                        self.scope_stack.pop()
                         try_except_tails +=new_tails
                         try_except_entries.append(except_entry)
 
@@ -445,20 +497,25 @@ class CFGGenerator():
                             skip.add((entry_node, tail_node))
 
                     if cur_node.finalbody:
-                        finally_entry = ast_node_wrappers.FinallyEntry()
                         cfg_nodes.append([finally_entry])
                         finally_body = ast_node_wrappers.FinallyBody(
                             body=cur_node.finalbody,
-                            lineno=stmts[0].lineno,
-                            col_offset=stmts[0].col_offset,
-                            end_lineno=stmts[-1].end_lineno,
-                            end_col_offset=stmts[-1].end_col_offset,
+                            lineno=cur_node.finalbody[0].lineno,
+                            col_offset=cur_node.finalbody[0].col_offset,
+                            end_lineno=cur_node.finalbody[-1].end_lineno,
+                            end_col_offset=cur_node.finalbody[-1].end_col_offset,
                         )
                         # All the tails of the try_except_block point to the finally's first block
                         finally_tails = self._dfs(finally_body, finally_entry)
                         cfg_nodes.append(finally_tails)
                         for finally_tail in finally_tails:
                             skip.add((finally_entry, finally_tail))
+
+                        # An uncaught raise ran this finally, so it carries on outward from here.
+                        # The tails still flow to the next code too (over-approximation).
+                        if try_catch_context.raise_reaches_finally or handler_context.raise_reaches_finally:
+                            for finally_tail in finally_tails:
+                                self._link_raise(finally_tail)
                     l = r+1
                 
                 case ast.Match():
@@ -588,7 +645,8 @@ class CFGGenerator():
                     cfg_nodes.append([cur_node])
 
                     """
-                    Link the raise to EVERY handler of EVERY enclosing try (over-approximation).
+                    Link the raise to EVERY handler of each enclosing try, plus the nearest
+                    finally for the uncaught case (over-approximation, see _link_raise).
                     
                     Deciding which handler actually catches a raise is a type question,
                     not a control flow one, so the CFG doesn't try to answer it:
@@ -606,16 +664,8 @@ class CFGGenerator():
                     only ever removed after this point, never added.
                     """
                     
-                    for i in range(len(self.scope_stack)-1, -1, -1):
-                        # Stop at the function boundary: a function body's raise propagates to its
-                        # call site, not to the try blocks lexically around the def
-                        if isinstance(self.scope_stack[i], FunctionContext):
-                            break
+                    self._link_raise(cur_node)
 
-                        if isinstance(self.scope_stack[i], TryCatchContext):
-                            for (handler, exception_entry) in self.scope_stack[i].except_block:
-                                self.cfg.insert(cur_node, exception_entry)
-                    
                     l=r+1
                     break
 
@@ -643,7 +693,7 @@ class CFGGenerator():
         
 
 if __name__ == "__main__":
-    with open("tests/cfg_graph_test_cases/try_catch.py", "r", encoding="utf-8") as f:
+    with open("tests/cfg_graph_test_cases/func_def.py", "r", encoding="utf-8") as f:
         tree = ast.parse(f.read())
 
     cfg = ControlFlowGraph()

@@ -1,6 +1,6 @@
 import ast
-from collections import defaultdict
 from enum import Enum, auto
+from collections import defaultdict
 
 import ast_node_wrappers
 
