@@ -1,93 +1,131 @@
 import builtins
+import symtable
 import uuid
 from dataclasses import dataclass
-from typing import Literal
 
 from type_lattice import LatticeValue
 
+"""
+Two tables, two jobs:
+
+    Environment (symbol tables)  -> the bookkeeper: what is x RIGHT NOW?
+                                    one entry per name, overwritten on reassignment.
+
+    ProvenanceTable              -> the occurrences: where did the type at (col, line)
+                                    come from? every use/definition gets an entry,
+                                    and parents point to the entries it was derived from.
+
+Scope rules (local / enclosing / global) are not guessed from the walk:
+Python's own `symtable` module decides them up front for the whole file.
+"""
+
 BUILTIN_SCOPE_ID = "builtins"
+
 
 @dataclass
 class SymbolTableEntry():
-    id: str     # id of the scope this symbol belongs to
+    scope_id: str            # id of the scope that owns this name
     type: LatticeValue
+    lineno: int | None       # where it was last assigned, None for builtins
+    col_offset: int | None
+
+
+@dataclass
+class Scope():
+    id: str                          # uuid4
+    symtable: symtable.SymbolTable   # Python's scope analysis for this scope
+    table: dict[str, SymbolTableEntry]
+
+    def is_class(self) -> bool:
+        return self.symtable.get_type() == "class"
+
+    def declares_local(self, x: str) -> bool:
+        return x in self.symtable.get_identifiers() and self.symtable.lookup(x).is_local()
+
 
 class Environment():
     """
-    LEGB lookup: scopes is a stack of (id, symbol_table), local on top,
-    global at the bottom, with builtins checked last.
+    scopes is a stack of Scope, global at the bottom, local on top.
+    builtins live outside the stack and are checked last for global names.
     """
-    def __init__(self):
+    def __init__(self, source: str, filename: str = "<file>"):
+        top = symtable.symtable(source, filename, "exec")
+        self.symtables = self._index_symtables(top)   # (name, lineno) -> SymbolTable
         self.builtin = {
-            name: SymbolTableEntry(BUILTIN_SCOPE_ID, LatticeValue.of(type(value).__name__))
+            name: SymbolTableEntry(BUILTIN_SCOPE_ID, LatticeValue.of(type(value).__name__), None, None)
             for name, value in vars(builtins).items()
         }
-        self.scopes = []
-        self.push_scope()  # global scope
+        self.scopes = [Scope(str(uuid.uuid4()), top, {})]   # global scope
 
-    def push_scope(self) -> str:
-        scope_id = str(uuid.uuid4())
-        self.scopes.append((scope_id, {}))
-        return scope_id
+    def _index_symtables(self, table, index=None):
+        index = {} if index is None else index
+        for child in table.get_children():
+            index[(child.get_name(), child.get_lineno())] = child
+            self._index_symtables(child, index)
+        return index
 
-    def pop_scope(self):
+    # ---------- scopes ---------- #
+
+    def push_scope(self, name: str, lineno: int) -> Scope:
+        """Enter the function/class `name` defined on `lineno`."""
+        scope = Scope(str(uuid.uuid4()), self.symtables[(name, lineno)], {})
+        self.scopes.append(scope)
+        return scope
+
+    def pop_scope(self) -> Scope:
         return self.scopes.pop()
 
-    def assign(self, target: str, _type: LatticeValue) -> SymbolTableEntry:
-        # Assignment always binds in the local (innermost) scope
-        scope_id, symbol_table = self.scopes[-1]
-        if target in symbol_table:
-            symbol_table[target].type = _type
-        else:
-            symbol_table[target] = SymbolTableEntry(scope_id, _type)
-        return symbol_table[target]
 
-    def shadow(self, target: str, scope: Literal["global", "nonlocal"]) -> SymbolTableEntry:
+    def _scope_of(self, x: str) -> Scope | None:
         """
-        Handles `global x` / `nonlocal x`: binds target in the local scope to
-        the SAME entry object as the outer one, so assigning to the local
-        target modifies the outer one (Python exposes no refs, but this is
-        what the declaration means).
-
-        global:    looks only in the top (global) scope.
-        enclosing: walks outward from the nearest enclosing scope, stopping
-                   before global, until target is found.
-
-        If target doesn't exist yet, we create the entry (Unknown) in the
-        global scope, or in the nearest enclosing scope, then copy that
-        entry into the local scope under the same target.
+        The scope x belongs to according to symtable, even if x has not
+        been assigned in it yet. None if no enclosing scope binds a free x.
+        Names symtable never saw in this scope are treated as global
+        (then builtins), like Python does for an unbound name.
         """
-        _, local_table = self.scopes[-1]
+        local = self.scopes[-1]
+        if x not in local.symtable.get_identifiers():
+            return self.scopes[0]
+        symbol = local.symtable.lookup(x)
 
-        if scope == "global":
-            outer_tables = [self.scopes[0]]
-        else:
-            outer_tables = list(reversed(self.scopes[1:-1]))
-            if not outer_tables:
-                raise SyntaxError(f"no enclosing scope for nonlocal '{target}'")
+        if symbol.is_free():
+            # Enclosing: nearest outer function that binds x, skipping
+            # class scopes (methods can't see class attributes) and global
+            for scope in reversed(self.scopes[1:-1]):
+                if not scope.is_class() and scope.declares_local(x):
+                    return scope
+            return None
 
-        for _, symbol_table in outer_tables:
-            if target in symbol_table:
-                entry = symbol_table[target]
-                break
-        else:
-            scope_id, symbol_table = outer_tables[0]
-            entry = SymbolTableEntry(scope_id, LatticeValue.unknown())
-            symbol_table[target] = entry
+        if symbol.is_global():
+            return self.scopes[0]
 
-        local_table[target] = entry
-        return entry
+        return local
 
-    def which(self, x: str) -> SymbolTableEntry:
-        # Local -> Enclosing -> Global
-        for _, symbol_table in reversed(self.scopes):
-            if x in symbol_table:
-                return symbol_table[x]
-        # Built-in
-        if x in self.builtin:
-            return self.builtin[x]
-        # Not found: declare it as Unknown in the innermost scope
-        scope_id, symbol_table = self.scopes[-1]
-        entry = SymbolTableEntry(scope_id, LatticeValue.unknown())
-        symbol_table[x] = entry
+    def which(self, x: str) -> SymbolTableEntry | None:
+        """The entry x currently refers to, or None if it has no value yet."""
+        scope = self._scope_of(x)
+        if scope is None:
+            return None
+        if x in scope.table:
+            return scope.table[x]
+        if scope is self.scopes[0]:
+            return self.builtin.get(x)
+        return None
+
+    def get_type(self, entry: SymbolTableEntry | None) -> LatticeValue:
+        return entry.type if entry else LatticeValue.unknown()
+
+    # ---------- write ---------- #
+
+    def assign(self, x: str, _type: LatticeValue, lineno: int, col_offset: int) -> SymbolTableEntry | None:
+        """
+        Bind x in the scope symtable says it belongs to. Replaces the entry
+        rather than mutating it, so branches sharing the old entry are
+        unaffected. Never touches builtins: `list = 5` creates a global.
+        """
+        scope = self._scope_of(x)
+        if scope is None:
+            return None
+        entry = SymbolTableEntry(scope.id, _type, lineno, col_offset)
+        scope.table[x] = entry
         return entry
