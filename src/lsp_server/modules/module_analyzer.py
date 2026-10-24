@@ -1,12 +1,21 @@
 import ast
 from collections import deque
 
+from lexical_environment import Environment
+from provenance_table import ProvenanceTableEntry
 from control_flow_graph import ControlFlowGraph
 from cfg_generator import CFGGenerator
 
 class ModuleAnalyzer():
     def __init__(self, filepath):
-        self.filepath = filepath
+        self.filepath: str = filepath
+        self.env = Environment(source=self.filepath)
+        self.provenance_table : dict[tuple[int, int]: ProvenanceTableEntry] = {
+            # (col, lineo) = ProvenanceTableEntry(type, parents: list[ProvenanceTableEntry])
+        }
+        
+        self.cfg_generator = None
+        self.cfg = None
     
     def process_file(self):
         with open(self.filepath, "r", encoding="utf-8") as f:

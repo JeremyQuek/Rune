@@ -25,7 +25,6 @@ MAX_UNION_SIZE = 5
 ANY = "Any"
 UNBOUND = "Unbound"
 
-
 class LatticeValue():
     def __init__(self, types=()):
         types = frozenset(types)

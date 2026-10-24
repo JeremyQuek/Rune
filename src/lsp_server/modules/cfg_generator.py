@@ -1,4 +1,6 @@
 import ast
+from dataclasses import dataclass, field
+
 import ast_node_wrappers
 from control_flow_graph import ControlFlowGraph
 
@@ -9,28 +11,28 @@ Used for validation (e.g. return must be inside a function, break inside a loop)
 and for connecting raise statements to their enclosing except handlers.
 
 """
+# eq=False: contexts are compared by identity, like plain objects
+@dataclass(eq=False)
+class IfElseContext():
+    pass
 
-class IfElseContext(): 
-    def __repr__(self):
-            return self.__class__.__name__
+@dataclass(eq=False)
+class FunctionContext():
+    pass
 
+@dataclass(eq=False)
+class ClassContext():
+    pass
+
+@dataclass(eq=False)
+class LoopContext():
+    pass
+
+@dataclass(eq=False)
 class TryCatchContext():
-    def __init__(self, finally_entry = None):
-        self.except_block = []
-        self.finally_entry = finally_entry   # created up front so raises in the try can reach it
-        self.raise_reaches_finally = False   # if set, the finally's tails keep propagating the raise
-
-class FunctionContext(): 
-    def __repr__(self):
-        return self.__class__.__name__
-    
-class ClassContext(): 
-    def __repr__(self):
-        return self.__class__.__name__
-    
-class LoopContext(): 
-    def __repr__(self):
-        return self.__class__.__name__
+    finally_entry: object = None             # created up front so raises in the try can reach it
+    except_block: list = field(default_factory=list)
+    raise_reaches_finally: bool = False      # if set, the finally's tails keep propagating the raise
 
 
 class CFGGenerator():

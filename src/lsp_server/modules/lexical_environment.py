@@ -24,7 +24,7 @@ BUILTIN_SCOPE_ID = "builtins"
 
 @dataclass
 class SymbolTableEntry():
-    scope_id: str            # id of the scope that owns this name
+    scope_id: str           
     type: LatticeValue
     lineno: int | None       # where it was last assigned, None for builtins
     col_offset: int | None
@@ -63,8 +63,6 @@ class Environment():
             index[(child.get_name(), child.get_lineno())] = child
             self._index_symtables(child, index)
         return index
-
-    # ---------- scopes ---------- #
 
     def push_scope(self, name: str, lineno: int) -> Scope:
         """Enter the function/class `name` defined on `lineno`."""
@@ -115,7 +113,6 @@ class Environment():
     def get_type(self, entry: SymbolTableEntry | None) -> LatticeValue:
         return entry.type if entry else LatticeValue.unknown()
 
-    # ---------- write ---------- #
 
     def assign(self, x: str, _type: LatticeValue, lineno: int, col_offset: int) -> SymbolTableEntry | None:
         """

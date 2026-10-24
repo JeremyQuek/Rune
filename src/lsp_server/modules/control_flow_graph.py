@@ -1,6 +1,7 @@
 import ast
 from enum import Enum, auto
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 import ast_node_wrappers
 
@@ -30,13 +31,14 @@ BOUNDARY_TYPES = {
     NodeType.FUNCTION_DEFINITION,
 }
 
+# eq=False: nodes are dict keys (adj, indeg), so they hash by identity
+@dataclass(eq=False)
 class Node():
-    def __init__(self, node_type: NodeType, is_boundary: bool = False, ast_node = None, enviroment = None):
-        self.node_type = node_type
-        self.ast_node = ast_node
-        self.is_boundary = is_boundary
-        self.enviroment = enviroment
-        self.next = []
+    node_type: NodeType
+    is_boundary: bool = False
+    ast_node: ast.AST | None = None
+    enviroment: object = None
+    next: list = field(default_factory=list)
 
     def __repr__(self):
         return self.node_type.name
