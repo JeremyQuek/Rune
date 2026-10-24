@@ -8,5 +8,5 @@
     "strict": true,
     "sourceMap": true
   },
-  "include": ["vscode_client.ts"]
+  "include": ["vscode_client.ts", "trace_tree.ts"]
 }

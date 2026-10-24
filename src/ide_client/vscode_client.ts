@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
+import { TraceGraph, jumpToLine, registerTraceTree, showGraph } from './trace_tree';
 
 /*
  * Minimal Rune VS Code client.
@@ -29,32 +30,40 @@ export function activate(context: vscode.ExtensionContext) {
     markdown: { isTrusted: true },
   };
 
-  context.subscriptions.push(vscode.commands.registerCommand('rune.showTrace', showTrace));
+  // showTrace / showGraph are run from hover links with [uri, graph],
+  // jumpToLine from clicks on the trace tree
+  registerTraceTree(context);
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rune.showTrace', showTrace),
+    vscode.commands.registerCommand('rune.showGraph', showGraph),
+    vscode.commands.registerCommand('rune.jumpToLine', jumpToLine),
+  );
 
   client = new LanguageClient('rune', 'Rune', serverOptions, clientOptions);
   client.start();
 }
 
-type TraceStep = { code: string; line: number };
+// Shows the trace as a dropdown list; picking a step jumps to its line,
+// picking "View as graph" opens the trace tree instead
+async function showTrace(uri: string, graph: TraceGraph) {
+  const viewAsGraph = { label: '$(type-hierarchy) View as graph', description: '', line: 0 };
+  const steps = graph.nodes.map((node) => ({
+    label: node.code,
+    description: `${node.type} · this file, line ${node.line}`,
+    line: node.line,
+  }));
 
-// Shows the trace as a dropdown list; picking a step jumps to its line
-async function showTrace(uri: string, steps: TraceStep[]) {
-  const picked = await vscode.window.showQuickPick(
-    steps.map((step) => ({
-      label: step.code,
-      description: `this file, line ${step.line}`,
-      step,
-    })),
-    { placeHolder: 'Variable trace: pick a step to jump to it' },
-  );
+  const picked = await vscode.window.showQuickPick([viewAsGraph, ...steps], {
+    placeHolder: 'Variable trace: pick a step to jump to it',
+  });
   if (!picked) {
     return;
   }
-
-  const position = new vscode.Position(picked.step.line - 1, 0); // ast lines are 1-based
-  const editor = await vscode.window.showTextDocument(vscode.Uri.parse(uri));
-  editor.selection = new vscode.Selection(position, position);
-  editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+  if (picked === viewAsGraph) {
+    await showGraph(uri, graph);
+    return;
+  }
+  await jumpToLine(uri, picked.line);
 }
 
 export function deactivate() {

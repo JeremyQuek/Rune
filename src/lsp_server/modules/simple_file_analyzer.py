@@ -1,5 +1,5 @@
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 """
 
@@ -12,13 +12,14 @@ Output is a type table: {(col, line): TableEntry} for every variable occurrence,
 where (col, line) is the position the symbol starts at, as reported by ast
 (col is 0-based, line is 1-based).
 
-Each TableEntry points back to the entry its type was traced from, so following
-the prev pointers gives the variable trace, e.g. for:
+Each TableEntry points back to the entries its type was traced from, so following
+the parents gives the variable trace. It is a DAG, not a chain, e.g. for:
 
-    x = 5
-    y = x
+    a = 1
+    b = 2
+    c = a + b
 
-y's entry ("y = x") -> x's entry ("x = 5") -> None
+c's entry ("c = a + b") -> parents [a's entry ("a = 1"), b's entry ("b = 2")]
 
 """
 
@@ -26,39 +27,48 @@ y's entry ("y = x") -> x's entry ("x = 5") -> None
 class TableEntry:
     type: str
     line: int
-    code: str                          # source of the statement that produced this type
-    prev: "TableEntry | None" = None   # entry the type was traced from, None if it starts here
+    code: str                                                  # source of the statement that produced this type
+    parents: list["TableEntry"] = field(default_factory=list)  # entries the type was traced from, empty if it starts here
 
 
-def infer_type(node: ast.expr, env: dict[str, TableEntry]) -> tuple[str, TableEntry | None]:
+def unique(entries: list[TableEntry]) -> list[TableEntry]:
+    """Drop repeated entries (e.g. `y + y`), keeping order."""
+    seen = []
+    for entry in entries:
+        if not any(entry is s for s in seen):
+            seen.append(entry)
+    return seen
+
+
+def infer_type(node: ast.expr, env: dict[str, TableEntry]) -> tuple[str, list[TableEntry]]:
     """
     Work out the type of an expression using the variables known so far.
-    Returns (type, entry the type was traced from), the entry being None
+    Returns (type, entries the type was traced from), the list being empty
     when the type comes straight from the expression itself (e.g. a literal).
     """
     match node:
         case ast.Constant():
-            return type(node.value).__name__, None
+            return type(node.value).__name__, []
         case ast.Name():
             if node.id in env:
-                return env[node.id].type, env[node.id]
-            return "Unknown", None
-        case ast.List():
-            return "list", None
+                return env[node.id].type, [env[node.id]]
+            return "Unknown", []
+        case ast.List() | ast.Tuple() | ast.Set():
+            # The container's type is fixed, but its elements still feed the trace
+            parents = [p for elt in node.elts for p in infer_type(elt, env)[1]]
+            return type(node).__name__.lower(), unique(parents)
         case ast.Dict():
-            return "dict", None
-        case ast.Tuple():
-            return "tuple", None
-        case ast.Set():
-            return "set", None
+            parts = [k for k in node.keys if k is not None] + node.values
+            parents = [p for part in parts for p in infer_type(part, env)[1]]
+            return "dict", unique(parents)
         case ast.BinOp():
-            left_type, left_entry = infer_type(node.left, env)
-            right_type, right_entry = infer_type(node.right, env)
+            left_type, left_parents = infer_type(node.left, env)
+            right_type, right_parents = infer_type(node.right, env)
+            parents = unique(left_parents + right_parents)
             if left_type != right_type:
-                return "Unknown", None
-            # Both sides agree, so trace through whichever side is a variable
-            return left_type, left_entry or right_entry
-    return "Unknown", None
+                return "Unknown", parents
+            return left_type, parents
+    return "Unknown", []
 
 
 def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
@@ -79,8 +89,8 @@ def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
         # Step 2: record every variable written in this statement
         match stmt:
             case ast.Assign():
-                value_type, prev = infer_type(stmt.value, env)
-                entry = TableEntry(type=value_type, line=stmt.lineno, code=code, prev=prev)
+                value_type, parents = infer_type(stmt.value, env)
+                entry = TableEntry(type=value_type, line=stmt.lineno, code=code, parents=parents)
                 for target in stmt.targets:
                     if isinstance(target, ast.Name):
                         env[target.id] = entry
@@ -96,6 +106,6 @@ def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
 
 
 if __name__ == "__main__":
-    with open("tests/cfg_graph_test_cases/linear.py", "r", encoding="utf-8") as f:
+    with open("tests/trace_dag_preview.py", "r", encoding="utf-8") as f:
         for (col, line), entry in analyze(f.read()).items():
-            print(f"line {line}, col {col}: {entry.type}  <- {entry.code}")
+            print(f"line {line}, col {col}: {entry.type}  <- {entry.code}  parents: {[p.code for p in entry.parents]}")

@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import urllib.parse
+from collections import deque
 
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
@@ -52,12 +53,18 @@ def hover(ls: LanguageServer, params: types.HoverParams):
     line = params.position.line  # LSP lines are 0-based
     col = params.position.character
 
-    entry = file_dict.get(uri, {}).get((col, line + 1))  # ast lines are 1-based
+    # Table keys are where a name starts, so match any key on this line whose
+    # name span covers the cursor (hovering anywhere on `suffix`, not just the `s`)
+    name = doc.word_at_position(params.position)
+    entry = next(
+        (e for (c, l), e in file_dict.get(uri, {}).items()
+         if l == line + 1 and c <= col < c + len(name)),  # ast lines are 1-based
+        None,
+    )
     if entry is None:
         return None
-
-    name = doc.word_at_position(params.position)
-    steps = trace_steps(entry)
+    graph = trace_graph(name, entry)
+    steps = graph["nodes"]
 
     # Preview the first few steps, each a link that jumps to its line (#L<line>)
     preview = "\n".join(
@@ -65,24 +72,48 @@ def hover(ls: LanguageServer, params: types.HoverParams):
         for step in steps[:TRACE_PREVIEW_LENGTH]
     )
 
-    # Clicking this link runs the client's rune.showTrace command with [uri, steps]
-    command_args = urllib.parse.quote(json.dumps([uri, steps]))
+    # Both links run a client command with [uri, graph]
+    command_args = urllib.parse.quote(json.dumps([uri, graph]))
     full_trace_link = f"[Show full trace ({len(steps)} steps)](command:rune.showTrace?{command_args})"
+    graph_link = f"[View as graph](command:rune.showGraph?{command_args})"
 
     return types.Hover(
         contents=types.MarkupContent(
             kind=types.MarkupKind.Markdown,
-            value=f"```python\n{name}: {entry.type}\n```\n\n**Trace**\n\n{preview}\n\n{full_trace_link}",
+            value=f"```python\n{name}: {entry.type}\n```\n\n**Trace**\n\n{preview}\n\n{full_trace_link} · {graph_link}",
         )
     )
 
-def trace_steps(entry: TableEntry) -> list[dict]:
-    """Follow the prev pointers back to where the type started, one step per entry."""
-    steps = []
-    while entry is not None:
-        steps.append({"code": entry.code, "line": entry.line})
-        entry = entry.prev
-    return steps
+
+def trace_graph(name: str, entry: TableEntry) -> dict:
+    """
+    Walks the parents breadth-first from the hovered entry. This is the
+    contract with the client (TraceGraph in trace_graph.ts):
+
+        {
+          "name":  "x",                                       # hovered symbol
+          "nodes": [{"id", "code", "line", "type"}, ...],     # id 0 is the hovered entry, then BFS order
+          "edges": [[parent_id, child_id], ...],              # the type flows parent -> child
+        }
+
+    Entries reached twice (a diamond) become one node with two edges.
+    The node list in BFS order doubles as the flat trace (hover preview, dropdown).
+    """
+    ids = {id(entry): 0}   # entry identity -> node id
+    nodes = [{"id": 0, "code": entry.code, "line": entry.line, "type": entry.type}]
+    edges = []
+
+    queue = deque([entry])
+    while queue:
+        child = queue.popleft()
+        for parent in child.parents:
+            if id(parent) not in ids:
+                ids[id(parent)] = len(nodes)
+                nodes.append({"id": len(nodes), "code": parent.code, "line": parent.line, "type": parent.type})
+                queue.append(parent)
+            edges.append([ids[id(parent)], ids[id(child)]])
+
+    return {"name": name, "nodes": nodes, "edges": edges}
 
 
 # @server.feature(types.TEXT_DOCUMENT_DID_CLOSE)

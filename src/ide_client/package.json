@@ -12,6 +12,13 @@
     "onLanguage:python"
   ],
   "main": "./out/vscode_client.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        { "id": "runeTrace", "name": "Rune Trace" }
+      ]
+    }
+  },
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./"
