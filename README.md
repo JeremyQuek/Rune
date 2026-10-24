@@ -27,24 +27,27 @@ What is the type of `result` or `profile`? Type hints exist but nobody uses them
 
 For complex classes, one might need to jump through files a few times to chasing it down by hand.
 
-Rune is a pet project I started out of inspiration to solve this problem. It's meant to be static analyzer that traces a variable back to where its type. Some of the sample outputs are seen below.
+Ths, I decided to embark on a simple project to create a type checker of sorts. Rune is name given to this project. While it isn't complete, I hope that the outcome offer some quality of life improvements to Python devs on a day to day
 
-It isn't meant to be a production grade type checkor, but more of a personal project and something I do out of genuine enjoyment out of my interest in compilers and compiler theory! 
+## Rune
 
-## Sample Outputs from Rune
+Rune offers a bunch of functionality out of the bag. It is a VScode extension that runs in as a background LSP to provide real time typechecking of your python code.
 
-Right now, Rune runs on an MVP single file analyzer. The following images reflect outputs from this MVP script. 
+**Type on Hover:** Rune lets you hover a variable type just like existing tools like Pylance, and MyPy, to show it's inferred type. But it also displays the trace of assignments to let you see how a variable got its type.
 
 <h4 align="center">Showing the type information and trace </h4>
 <p align="center"><img width="650"  src="assets/screenshots/img2.png" /></p>
 
-Rune lets you hover a variable type just like existing tools like Pylance, and MyPy, but also displays the trace of assign statements that lead to 
-a variable having this type
+**Jump to File:** Left click "Show Full Trace" in the hover panel shows the full history of assignments. Click on any line to jump to it. 
 
 <h4 align="center"> Opening a full trace window with jump-to-file-line function </h4>
 <p align="center"><img width="650" src="assets/screenshots/img1.png" /></p>
 
-Additional functionality allows you to open the full trace stack, and click on a line to jump to that file line to check it out. 
+**View as Graph:** For complex assignments, left click on "View as graph" to view the relationships as a visual type graph in a preview tab.
+<h4 align="center"> Rune's Type Graph </h4>
+<p align="center"><img width="650" src="assets/screenshots/img3.png" /></p>
+
+This lets you manually inspect each node, and even lookup the exact file line should the type checker be imprecise.
 
 ## Project Architecture
 

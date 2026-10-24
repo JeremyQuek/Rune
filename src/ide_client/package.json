@@ -24,6 +24,7 @@
     "watch": "tsc -watch -p ./"
   },
   "dependencies": {
+    "mermaid": "^11.4.1",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {

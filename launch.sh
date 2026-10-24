@@ -17,5 +17,11 @@ cd "$root/src/ide_client"
 npm run compile
 echo "- Compiled client"
 
-RUNE_PYTHON="$python" code --extensionDevelopmentPath="$root/src/ide_client"
+# Own profile (.vscode-dev) so the dev window doesn't share webview/service
+# worker state with your main VS Code, which breaks webviews in the dev window
+workspace="${1:-$HOME/Desktop/rune}"
+
+RUNE_PYTHON="$python" code --user-data-dir "$root/.vscode-dev" \
+  --extensionDevelopmentPath="$root/src/ide_client" \
+  "$workspace"
 echo "- Launched Rune extension"

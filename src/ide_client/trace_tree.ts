@@ -69,8 +69,8 @@ export function registerTraceTree(context: vscode.ExtensionContext) {
   context.subscriptions.push(treeView);
 }
 
-// rune.showGraph: fill the tree and bring the view into focus
-export async function showGraph(uri: string, graph: TraceGraph) {
+// Fill the tree and bring the view into focus
+export async function showTraceTree(uri: string, graph: TraceGraph) {
   provider.setGraph(uri, graph);
   if (treeView) {
     treeView.message = undefined;
@@ -80,9 +80,9 @@ export async function showGraph(uri: string, graph: TraceGraph) {
 }
 
 // Opens the file and puts the cursor on `line` (1-based, as in ast)
-export async function jumpToLine(uri: string, line: number) {
+export async function jumpToLine(uri: string, line: number, viewColumn?: vscode.ViewColumn) {
   const position = new vscode.Position(line - 1, 0);
-  const editor = await vscode.window.showTextDocument(vscode.Uri.parse(uri));
+  const editor = await vscode.window.showTextDocument(vscode.Uri.parse(uri), { viewColumn });
   editor.selection = new vscode.Selection(position, position);
   editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
 }

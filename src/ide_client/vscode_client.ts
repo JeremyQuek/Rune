@@ -1,7 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
-import { TraceGraph, jumpToLine, registerTraceTree, showGraph } from './trace_tree';
+import { TraceGraph, jumpToLine, registerTraceTree, showTraceTree } from './trace_tree';
+import { showTraceWebview } from './trace_webview';
 
 /*
  * Minimal Rune VS Code client.
@@ -34,8 +35,8 @@ export function activate(context: vscode.ExtensionContext) {
   // jumpToLine from clicks on the trace tree
   registerTraceTree(context);
   context.subscriptions.push(
-    vscode.commands.registerCommand('rune.showTrace', showTrace),
-    vscode.commands.registerCommand('rune.showGraph', showGraph),
+    vscode.commands.registerCommand('rune.showTrace', (uri: string, graph: TraceGraph) => showTrace(context, uri, graph)),
+    vscode.commands.registerCommand('rune.showGraph', (uri: string, graph: TraceGraph) => showGraph(context, uri, graph)),
     vscode.commands.registerCommand('rune.jumpToLine', jumpToLine),
   );
 
@@ -44,8 +45,8 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 // Shows the trace as a dropdown list; picking a step jumps to its line,
-// picking "View as graph" opens the trace tree instead
-async function showTrace(uri: string, graph: TraceGraph) {
+// picking "View as graph" opens the graph views instead
+async function showTrace(context: vscode.ExtensionContext, uri: string, graph: TraceGraph) {
   const viewAsGraph = { label: '$(type-hierarchy) View as graph', description: '', line: 0 };
   const steps = graph.nodes.map((node) => ({
     label: node.code,
@@ -60,10 +61,16 @@ async function showTrace(uri: string, graph: TraceGraph) {
     return;
   }
   if (picked === viewAsGraph) {
-    await showGraph(uri, graph);
+    await showGraph(context, uri, graph);
     return;
   }
   await jumpToLine(uri, picked.line);
+}
+
+// "View as graph": the tree in the Explorer and the drawn DAG beside the code
+async function showGraph(context: vscode.ExtensionContext, uri: string, graph: TraceGraph) {
+  showTraceWebview(context, uri, graph);
+  await showTraceTree(uri, graph);
 }
 
 export function deactivate() {

@@ -6,7 +6,9 @@
     "outDir": "out",
     "rootDir": ".",
     "strict": true,
-    "sourceMap": true
+    "sourceMap": true,
+    // Only load these @types; mermaid pulls in @types/d3-*, which need the DOM lib
+    "types": ["node", "vscode"]
   },
-  "include": ["vscode_client.ts", "trace_tree.ts"]
+  "include": ["vscode_client.ts", "trace_tree.ts", "trace_webview.ts"]
 }
