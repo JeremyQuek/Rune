@@ -7,31 +7,23 @@
 - Experimental: The one that uses heavy AI.
 
 
-<h1 align="center">A Type Analzyer for Python</h1>
+<h1 align="center">Rune: A Type Analzyer for Python</h1>
 <p align="center"><img src="assets/docs/gecko.png" alt="Rune" width="700" /></p>
 <p align="center"><sub>Image credit: <a href="https://lbbonline.com/news/It-Feels-Good-to-GEICO">GEICO, via LBB Online</a></sub></p>
 
 ### What's This About
-Python is a dynamically typed language. This makes development faster but also makes
-type management tricky for large codebases (like LangChain, FastAPI, SQLAlchemy, Pydantic, PyTorch)
-
-For instance:
+Python's dynamic typing makes it hard to tell what type a variable is in a large codebase (like LangChain, SQLAlchemy, PyTorch), and even harder to tell *where that type came from*.
 
 ```python
 def get_profile(session, user_id):
-    result = session.query(User).filter_by(id=user_id).first()
-    return result.metadata.get("profile")
+    result = session.query(User).filter_by(id=user_id).first() # What is the type of result?? 
 ```
 
-What is the type of `result` or `profile`? Type hints exist but nobody uses them consistently, but they don't display the actual provenance of how those types are inferred. 
+Rune began as a modest attempt to build a type checker of sorts. It remains a work in progress, but my hope is that it offers Python developers meaningful quality-of-life improvements in their day-to-day work.
 
-For complex classes, one might need to jump through files a few times to chasing it down by hand.
+## Rune's Features
 
-Ths, I decided to embark on a simple project to create a type checker of sorts. Rune is name given to this project. While it isn't complete, I hope that the outcome offer some quality of life improvements to Python devs on a day to day
-
-## Rune
-
-Rune offers a bunch of functionality out of the bag. It is a VScode extension that runs in as a background LSP to provide real time typechecking of your python code.
+Rune is a VScode extension that runs in as a background LSP to provide real time typechecking of your python code.
 
 **Type on Hover:** Rune lets you hover a variable type just like existing tools like Pylance, and MyPy, to show it's inferred type. But it also displays the trace of assignments to let you see how a variable got its type.
 
