@@ -69,7 +69,7 @@ async function showTrace(context: vscode.ExtensionContext, uri: string, graph: T
 
 // "View as graph": the tree in the Explorer and the drawn DAG beside the code
 async function showGraph(context: vscode.ExtensionContext, uri: string, graph: TraceGraph) {
-  showTraceWebview(context, uri, graph);
+  showTraceWebview(context, graph);
   await showTraceTree(uri, graph);
 }
 

@@ -10,7 +10,15 @@ import * as vscode from 'vscode';
  */
 
 // Contract with server.py
-export type TraceNode = { id: number; code: string; line: number; type: string };
+export type Operand = { name: string; type: string; line: number | null }; // line is null for literals
+export type TraceNode = {
+  id: number;
+  code: string;
+  line: number;
+  type: string;
+  file: string;          // uri of the file the entry is in
+  operands: Operand[];   // names and literals the rhs is built from
+};
 export type TraceGraph = {
   name: string;               // hovered symbol
   nodes: TraceNode[];         // id 0 is the hovered entry, then BFS order; nodes[id].id === id
@@ -54,7 +62,7 @@ class TraceTreeProvider implements vscode.TreeDataProvider<TraceNode> {
     );
     item.description = `${node.type} · line ${node.line}`;
     item.tooltip = `${node.code}\n${node.type}, this file, line ${node.line}`;
-    item.command = { command: 'rune.jumpToLine', title: 'Jump to line', arguments: [this.uri, node.line] };
+    item.command = { command: 'rune.jumpToLine', title: 'Jump to line', arguments: [node.file ?? this.uri, node.line] };
     return item;
   }
 }

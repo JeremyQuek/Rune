@@ -9,6 +9,9 @@ import { TraceGraph, TraceNode, jumpToLine } from './trace_tree';
  * turns it into Mermaid text, and Mermaid (bundled from node_modules, since
  * webviews block remote scripts) lays it out. The page is styled from VS Code's
  * theme variables, supports pan/zoom, and clicking a node jumps to its line.
+ * Hovering a node shows its rhs broken into operands and their types.
+ * The Filter by file dropdown dims every node outside the chosen file; "Group by file" redraws
+ * the graph with one box per file.
  *
  * Node kinds:
  *   hovered  the variable you hovered (node 0)
@@ -17,11 +20,10 @@ import { TraceGraph, TraceNode, jumpToLine } from './trace_tree';
  */
 
 let panel: vscode.WebviewPanel | undefined; // one panel, reused for every graph
-let panelUri = '';                          // file the current graph belongs to
 
 type NodeKind = 'hovered' | 'step' | 'source';
 
-export function showTraceWebview(context: vscode.ExtensionContext, uri: string, graph: TraceGraph) {
+export function showTraceWebview(context: vscode.ExtensionContext, graph: TraceGraph) {
   const mermaidDir = vscode.Uri.file(path.join(context.extensionPath, 'node_modules', 'mermaid', 'dist'));
 
   if (!panel) {
@@ -30,13 +32,14 @@ export function showTraceWebview(context: vscode.ExtensionContext, uri: string, 
       localResourceRoots: [mermaidDir],
     });
     panel.onDidDispose(() => (panel = undefined));
-    // The webview posts { line } when a node is clicked; open it in the code column
-    panel.webview.onDidReceiveMessage((message: { line: number }) => jumpToLine(panelUri, message.line, vscode.ViewColumn.One));
+    // The webview posts { file, line } when a node is clicked; open it in the code column
+    panel.webview.onDidReceiveMessage((message: { file: string; line: number }) =>
+      jumpToLine(message.file, message.line, vscode.ViewColumn.One),
+    );
   }
 
-  panelUri = uri;
   panel.title = `Type Graph: ${graph.name}`;
-  panel.webview.html = renderHtml(panel.webview, vscode.Uri.joinPath(mermaidDir, 'mermaid.min.js'), uri, graph);
+  panel.webview.html = renderHtml(panel.webview, vscode.Uri.joinPath(mermaidDir, 'mermaid.min.js'), graph);
   panel.reveal(vscode.ViewColumn.Beside, true); // true: keep focus on the code
 }
 
@@ -52,19 +55,33 @@ function nodeKinds(graph: TraceGraph): Map<number, NodeKind> {
   );
 }
 
+function baseName(file: string): string {
+  return decodeURIComponent(path.posix.basename(vscode.Uri.parse(file).path));
+}
+
 // A node card: the code on top, a type pill, file and line underneath
-function nodeLabel(node: TraceNode, fileName: string): string {
+function nodeLabel(node: TraceNode): string {
   return (
     `<div class='code'>${escapeLabel(node.code)}</div>` +
     `<div class='meta'><span class='type'>${escapeLabel(node.type)}</span><span class='line'>line ${node.line}</span></div>` +
-    `<div class='file'>${escapeLabel(fileName)}</div>`
+    `<div class='file'>${escapeLabel(baseName(node.file))}</div>`
   );
 }
 
-function toMermaid(graph: TraceGraph, kinds: Map<number, NodeKind>, fileName: string): string {
+// grouped: wrap each file's nodes in a subgraph f<index into files>
+function toMermaid(graph: TraceGraph, kinds: Map<number, NodeKind>, files: string[], grouped: boolean): string {
   const lines = ['flowchart TD'];
+  const declare = (node: TraceNode) => lines.push(`  n${node.id}("${nodeLabel(node)}")`);
+  if (grouped) {
+    files.forEach((file, i) => {
+      lines.push(`  subgraph f${i}["${escapeLabel(baseName(file))}"]`);
+      graph.nodes.filter((node) => node.file === file).forEach(declare);
+      lines.push('  end');
+    });
+  } else {
+    graph.nodes.forEach(declare);
+  }
   for (const node of graph.nodes) {
-    lines.push(`  n${node.id}("${nodeLabel(node, fileName)}")`);
     lines.push(`  class n${node.id} ${kinds.get(node.id)}`);
     lines.push(`  click n${node.id} runeJump`); // calls window.runeJump("n<id>")
   }
@@ -91,16 +108,20 @@ function escapeHtml(text: string): string {
 
 // ---------- page ---------- //
 
-function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, uri: string, graph: TraceGraph): string {
+function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, graph: TraceGraph): string {
   const nonce = Math.random().toString(36).slice(2);
   // JSON goes inside a <script>, so escape "<" to keep "</script>" in code from closing it
   const toScript = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
 
   const kinds = nodeKinds(graph);
   const sourceCount = [...kinds.values()].filter((kind) => kind === 'source').length;
-  const fileName = decodeURIComponent(path.posix.basename(vscode.Uri.parse(uri).path));
-  const lineById = Object.fromEntries(graph.nodes.map((node) => [`n${node.id}`, node.line]));
+  const files = [...new Set(graph.nodes.map((node) => node.file))]; // in BFS order, hovered file first
+  const fileNames = files.map(baseName);
+  const nodeById = Object.fromEntries(graph.nodes.map((node) => [`n${node.id}`, { ...node, kind: kinds.get(node.id) }]));
   const hovered = graph.nodes[0];
+  const fileOptions = files
+    .map((file, i) => `<option value="${i}" title="${escapeHtml(file)}">${escapeHtml(fileNames[i])}</option>`)
+    .join('');
 
   return `<!DOCTYPE html>
 <html>
@@ -110,7 +131,8 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, uri: string
         content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
   <style>
     :root {
-      --bg: var(--vscode-editor-background, #1e1e1e);
+      /* a few shades darker than the editor so the panel stands out */
+      --bg: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 72%, black);
       --fg: var(--vscode-editor-foreground, #d4d4d4);
       --muted: var(--vscode-descriptionForeground, #9d9d9d);
       --card: var(--vscode-editorWidget-background, #252526);
@@ -175,6 +197,75 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, uri: string
       cursor: pointer;
     }
     .tools button:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.2)); }
+    .tools button.on { border-color: var(--accent); color: var(--fg); }
+
+    /* ----- filter by file: focus one file ----- */
+    .filter { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+    .filter select {
+      max-width: 220px;
+      padding: 4px 8px;
+      border: 1px solid var(--vscode-dropdown-border, var(--border));
+      border-radius: 6px;
+      background: var(--vscode-dropdown-background, var(--card));
+      color: var(--vscode-dropdown-foreground, var(--fg));
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .filter select:focus { outline: 1px solid var(--accent); }
+    .filter select.active { border-color: var(--accent); }
+    #canvas .dim { opacity: 0.15; }
+    #canvas .node, #canvas .cluster, #canvas path { transition: opacity 0.2s ease; }
+
+    /* ----- file boxes (Group by file) ----- */
+    #canvas .cluster rect {
+      fill: color-mix(in srgb, var(--fg) 4%, transparent) !important;
+      stroke: var(--border) !important;
+      stroke-dasharray: 5 4;
+      rx: 12px;
+      ry: 12px;
+    }
+    #canvas .cluster-label, #canvas .cluster .nodeLabel { color: var(--muted) !important; font-size: 12px; }
+
+    /* ----- node hover: the rhs broken into operands ----- */
+    #tip {
+      position: absolute;
+      z-index: 5;
+      min-width: 210px;
+      max-width: 380px;
+      padding: 10px 12px;
+      border: 1px solid var(--vscode-editorHoverWidget-border, var(--border));
+      border-radius: 8px;
+      background: var(--vscode-editorHoverWidget-background, var(--card));
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      font-size: 12px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.12s ease;
+    }
+    #tip.show { opacity: 1; }
+    #tip .head {
+      margin-bottom: 6px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    #tip .label { margin-bottom: 4px; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+    #tip .row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 3px 0; }
+    #tip .row code { font-family: var(--vscode-editor-font-family, monospace); }
+    #tip .where { min-width: 52px; color: var(--muted); text-align: right; }
+    #tip .empty { color: var(--muted); }
+    #tip .result {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 6px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+    }
 
     /* ----- canvas: dotted grid, pan/zoom ----- */
     #viewport {
@@ -255,13 +346,17 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, uri: string
       <span class="name">${escapeHtml(graph.name)}</span>
       <span class="pill">${escapeHtml(hovered.type)}</span>
     </div>
-    <div class="sub">${graph.nodes.length} steps · ${sourceCount} source${sourceCount === 1 ? '' : 's'} · ${escapeHtml(fileName)}</div>
+    <div class="sub">${graph.nodes.length} steps · ${sourceCount} source${sourceCount === 1 ? '' : 's'} · ${files.length} file${files.length === 1 ? '' : 's'}</div>
+    <label class="filter">Filter by file
+      <select id="fileFilter"><option value="">All files</option>${fileOptions}</select>
+    </label>
     <div class="legend">
       <span><i class="dot hovered"></i>hovered</span>
       <span><i class="dot step"></i>derived</span>
       <span><i class="dot source"></i>source</span>
     </div>
     <div class="tools">
+      <button id="group" title="Draw one box per file">Group by file</button>
       <button id="zoomOut" title="Zoom out">−</button>
       <button id="fit" title="Fit to view">Fit</button>
       <button id="zoomIn" title="Zoom in">+</button>
@@ -270,15 +365,21 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, uri: string
 
   <div id="viewport">
     <div id="canvas"></div>
-    <div class="hint">Click a node to jump to it · drag to pan · scroll to zoom</div>
+    <div id="tip"></div>
+    <div class="hint">Hover a node for its operands · click to jump · drag to pan · scroll to zoom</div>
   </div>
 
   <script nonce="${nonce}" src="${webview.asWebviewUri(mermaidUri)}"></script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    const lineById = ${toScript(lineById)};
+    const nodeById = ${toScript(nodeById)};
+    const files = ${toScript(files)};
+    const diagrams = { flat: ${toScript(toMermaid(graph, kinds, files, false))}, grouped: ${toScript(toMermaid(graph, kinds, files, true))} };
     const viewport = document.getElementById('viewport');
     const canvas = document.getElementById('canvas');
+    const tip = document.getElementById('tip');
+
+    const esc = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     // ----- pan / zoom ----- //
     let scale = 1, x = 0, y = 0;
@@ -315,6 +416,7 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, uri: string
     }, { passive: false });
 
     viewport.addEventListener('mousedown', (event) => {
+      hideTip();
       const startX = event.clientX - x, startY = event.clientY - y, originX = event.clientX, originY = event.clientY;
       dragged = false;
       viewport.classList.add('dragging');
@@ -341,7 +443,90 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, uri: string
 
     // ----- clicks ----- //
     window.runeJump = (id) => {
-      if (!dragged) vscode.postMessage({ line: lineById[id] });
+      const node = nodeById[id];
+      if (!dragged && node) vscode.postMessage({ file: node.file, line: node.line });
+    };
+
+    // Mermaid ids DOM elements as [prefix-]flowchart-n3-<k> (nodes), L_n1_n3_<k> (edges)
+    // and [prefix-]f0 (file boxes), so map them back to graph ids
+    const nodeIdOf = (el) => (el.id.match(/flowchart-(n\\d+)-\\d+$/) || [])[1];
+    const edgeEndsOf = (el) => el.id.match(/L[-_](n\\d+)[-_](n\\d+)[-_]\\d+$/);
+    const fileIndexOf = (el) => (el.id.match(/(?:^|-)f(\\d+)$/) || [])[1];
+
+    // ----- node hover: operands ----- //
+    function tipHtml(node) {
+      const rows = node.operands.map((op) =>
+        '<div class="row"><code>' + esc(op.name) + '</code>' +
+        '<span class="type">' + esc(op.type) + '</span>' +
+        '<span class="where">' + (op.line != null ? 'line ' + op.line : op.type === 'Unknown' ? 'unresolved' : 'literal') + '</span></div>'
+      ).join('');
+      return '<div class="head">' + esc(node.code) + '</div>' +
+        '<div class="label">operands</div>' +
+        (rows || '<div class="empty">none: the type comes from the annotation</div>') +
+        '<div class="result"><span>result</span><span class="type">' + esc(node.type) + '</span></div>';
+    }
+
+    function showTip(id, event) {
+      const node = nodeById[id];
+      if (!node || viewport.classList.contains('dragging')) return;
+      tip.innerHTML = tipHtml(node);
+      tip.className = 'show ' + node.kind; // kind recolours the type pills like the card
+      moveTip(event);
+    }
+
+    function moveTip(event) {
+      const rect = viewport.getBoundingClientRect();
+      const left = Math.min(event.clientX - rect.left + 16, viewport.clientWidth - tip.offsetWidth - 8);
+      const top = Math.min(event.clientY - rect.top + 16, viewport.clientHeight - tip.offsetHeight - 8);
+      tip.style.left = Math.max(8, left) + 'px';
+      tip.style.top = Math.max(8, top) + 'px';
+    }
+
+    function hideTip() { tip.className = ''; }
+
+    function wireNodes() {
+      canvas.querySelectorAll('g.node').forEach((el) => {
+        const id = nodeIdOf(el);
+        if (!id) return;
+        el.addEventListener('mouseenter', (event) => showTip(id, event));
+        el.addEventListener('mousemove', moveTip);
+        el.addEventListener('mouseleave', hideTip);
+      });
+    }
+
+    // ----- focus a file: everything else goes dark ----- //
+    let focus = null; // file uri, or null for all
+
+    function applyFocus() {
+      const outside = (id) => focus !== null && nodeById[id]?.file !== focus;
+      canvas.querySelectorAll('g.node').forEach((el) => {
+        const id = nodeIdOf(el);
+        if (id) el.classList.toggle('dim', outside(id));
+      });
+      canvas.querySelectorAll('path').forEach((el) => {
+        const ends = edgeEndsOf(el);
+        if (ends) el.classList.toggle('dim', outside(ends[1]) || outside(ends[2]));
+      });
+      canvas.querySelectorAll('g.cluster').forEach((el) => {
+        const i = fileIndexOf(el);
+        if (i !== undefined) el.classList.toggle('dim', focus !== null && files[i] !== focus);
+      });
+      fileFilter.classList.toggle('active', focus !== null);
+    }
+
+    const fileFilter = document.getElementById('fileFilter');
+    fileFilter.onchange = () => {
+      focus = fileFilter.value === '' ? null : files[fileFilter.value]; // '' is All files
+      applyFocus();
+    };
+
+    // ----- group by file ----- //
+    let grouped = false;
+    const groupButton = document.getElementById('group');
+    groupButton.onclick = () => {
+      grouped = !grouped;
+      groupButton.classList.toggle('on', grouped);
+      draw();
     };
 
     // ----- render ----- //
@@ -366,14 +551,20 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, uri: string
       flowchart: { curve: 'basis', htmlLabels: true, useMaxWidth: false, nodeSpacing: 36, rankSpacing: 56, padding: 14 },
     });
 
-    mermaid.render('trace', ${toScript(toMermaid(graph, kinds, fileName))}).then(({ svg, bindFunctions }) => {
+    let renders = 0; // each render needs a fresh id
+    async function draw() {
+      hideTip();
+      const { svg, bindFunctions } = await mermaid.render('trace' + renders++, grouped ? diagrams.grouped : diagrams.flat);
       canvas.innerHTML = svg;
       const element = canvas.querySelector('svg');
       element.setAttribute('width', element.viewBox.baseVal.width);
       element.setAttribute('height', element.viewBox.baseVal.height);
       bindFunctions?.(canvas); // wires up the click directives
+      wireNodes();
+      applyFocus();
       fit(false);
-    });
+    }
+    draw();
   </script>
 </body>
 </html>`;

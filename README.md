@@ -23,23 +23,27 @@ Rune began as a modest attempt to build a type checker of sorts. It remains a wo
 
 ## Rune's Features
 
-Rune is a VScode extension that runs in as a background LSP to provide real time typechecking of your python code.
+Rune is a VScode extension that runs as a language server to provide real time type analysis of your Python code.
 
-**Type on Hover:** Rune lets you hover a variable type just like existing tools like Pylance, and MyPy, to show it's inferred type. But it also displays the trace of assignments to let you see how a variable got its type.
+**You can view types on hover, and see their assignment trace.** 
 
 <h4 align="center">Showing the type information and trace </h4>
 <p align="center"><img width="650"  src="assets/screenshots/img2.png" /></p>
 
-**Jump to File:** Left click "Show Full Trace" in the hover panel shows the full history of assignments. Click on any line to jump to it. 
+**Left clicking on "Show Full Trace" shows every line. Clicking on a line jumps to file and line.** 
 
 <h4 align="center"> Opening a full trace window with jump-to-file-line function </h4>
 <p align="center"><img width="650" src="assets/screenshots/img1.png" /></p>
 
-**View as Graph:** For complex assignments, left click on "View as graph" to view the relationships as a visual type graph in a preview tab.
+**"View as graph" generates a graph that shows the history of a variable and the flow of sources from different files to give a variable get its value** 
+
 <h4 align="center"> Rune's Type Graph </h4>
 <p align="center"><img width="650" src="assets/screenshots/img3.png" /></p>
 
-This lets you manually inspect each node, and even lookup the exact file line should the type checker be imprecise.
+This lets you manually inspect each node, and clicking on it jumps to that file and line for manual inspection.
+
+Rune implements on its own typing engine, and does not rely on any other existing software (MyPy, Pyright etc) to provide type information.
+
 
 ## Project Architecture
 
@@ -50,7 +54,7 @@ The checker's architecture runs on three separate logical components.
 
 - A editor side client which emits events like file open, hover, file change. 
 - An LSP server which captures changes over JSON-RPC, and transmits info to the analyzer
-- A analyzing Enginer that performs the type checking on the codebase
+- A analysis engine that performs the type checking on the codebase
 
 While the editor client and LSP are minimally implemented, the roadmap analyzer is not yet done, and is a WIP.
 

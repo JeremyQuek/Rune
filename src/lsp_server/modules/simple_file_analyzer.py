@@ -24,11 +24,19 @@ c's entry ("c = a + b") -> parents [a's entry ("a = 1"), b's entry ("b = 2")]
 """
 
 @dataclass
+class Operand:
+    name: str          # source text, e.g. `a` or `1`
+    type: str
+    line: int | None   # line the operand's type was assigned on, None for literals and unknown names
+
+
+@dataclass
 class TableEntry:
     type: str
     line: int
     code: str                                                  # source of the statement that produced this type
     parents: list["TableEntry"] = field(default_factory=list)  # entries the type was traced from, empty if it starts here
+    operands: list[Operand] = field(default_factory=list)      # the names and literals the rhs is built from
 
 
 def unique(entries: list[TableEntry]) -> list[TableEntry]:
@@ -71,6 +79,23 @@ def infer_type(node: ast.expr, env: dict[str, TableEntry]) -> tuple[str, list[Ta
     return "Unknown", []
 
 
+def operands_of(node: ast.expr, env: dict[str, TableEntry]) -> list[Operand]:
+    """The names and literals an expression is built from, in source order, each once."""
+    leaves = [n for n in ast.walk(node) if isinstance(n, (ast.Name, ast.Constant))]
+    leaves.sort(key=lambda n: (n.lineno, n.col_offset))
+    operands = []
+    for leaf in leaves:
+        text = ast.unparse(leaf)
+        if any(o.name == text for o in operands):
+            continue
+        if isinstance(leaf, ast.Name):
+            known = env.get(leaf.id)
+            operands.append(Operand(text, known.type if known else "Unknown", known.line if known else None))
+        else:
+            operands.append(Operand(text, type(leaf.value).__name__, None))
+    return operands
+
+
 def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
     tree = ast.parse(source)
     env = {}    # variable name -> entry of its latest assignment
@@ -90,7 +115,8 @@ def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
         match stmt:
             case ast.Assign():
                 value_type, parents = infer_type(stmt.value, env)
-                entry = TableEntry(type=value_type, line=stmt.lineno, code=code, parents=parents)
+                entry = TableEntry(type=value_type, line=stmt.lineno, code=code, parents=parents,
+                                   operands=operands_of(stmt.value, env))
                 for target in stmt.targets:
                     if isinstance(target, ast.Name):
                         env[target.id] = entry
@@ -98,7 +124,8 @@ def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
 
             case ast.AnnAssign(target=ast.Name()):
                 # x: int = ... trusts the annotation, so the trace starts here
-                entry = TableEntry(type=ast.unparse(stmt.annotation), line=stmt.lineno, code=code)
+                operands = operands_of(stmt.value, env) if stmt.value else []
+                entry = TableEntry(type=ast.unparse(stmt.annotation), line=stmt.lineno, code=code, operands=operands)
                 env[stmt.target.id] = entry
                 table[(stmt.target.col_offset, stmt.target.lineno)] = entry
 

@@ -3,6 +3,7 @@ import os
 import sys
 import urllib.parse
 from collections import deque
+from dataclasses import asdict
 
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
@@ -63,7 +64,7 @@ def hover(ls: LanguageServer, params: types.HoverParams):
     )
     if entry is None:
         return None
-    graph = trace_graph(name, entry)
+    graph = trace_graph(name, entry, uri)
     steps = graph["nodes"]
 
     # Preview the first few steps, each a link that jumps to its line (#L<line>)
@@ -85,22 +86,30 @@ def hover(ls: LanguageServer, params: types.HoverParams):
     )
 
 
-def trace_graph(name: str, entry: TableEntry) -> dict:
+def trace_graph(name: str, entry: TableEntry, file: str) -> dict:
     """
     Walks the parents breadth-first from the hovered entry. This is the
-    contract with the client (TraceGraph in trace_graph.ts):
+    contract with the client (TraceGraph in trace_tree.ts):
 
         {
           "name":  "x",                                       # hovered symbol
-          "nodes": [{"id", "code", "line", "type"}, ...],     # id 0 is the hovered entry, then BFS order
+          "nodes": [{"id", "code", "line", "type",            # id 0 is the hovered entry, then BFS order
+                     "file",                                  # uri of the file the entry is in
+                     "operands": [{"name", "type", "line"}]}, # rhs names/literals, line None for literals
+                    ...],
           "edges": [[parent_id, child_id], ...],              # the type flows parent -> child
         }
 
     Entries reached twice (a diamond) become one node with two edges.
     The node list in BFS order doubles as the flat trace (hover preview, dropdown).
+    Single-file for now, so every node gets the hovered file.
     """
+    def node(e: TableEntry, node_id: int) -> dict:
+        return {"id": node_id, "code": e.code, "line": e.line, "type": e.type, "file": file,
+                "operands": [asdict(o) for o in e.operands]}
+
     ids = {id(entry): 0}   # entry identity -> node id
-    nodes = [{"id": 0, "code": entry.code, "line": entry.line, "type": entry.type}]
+    nodes = [node(entry, 0)]
     edges = []
 
     queue = deque([entry])
@@ -109,7 +118,7 @@ def trace_graph(name: str, entry: TableEntry) -> dict:
         for parent in child.parents:
             if id(parent) not in ids:
                 ids[id(parent)] = len(nodes)
-                nodes.append({"id": len(nodes), "code": parent.code, "line": parent.line, "type": parent.type})
+                nodes.append(node(parent, len(nodes)))
                 queue.append(parent)
             edges.append([ids[id(parent)], ids[id(child)]])
 
