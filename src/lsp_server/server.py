@@ -4,6 +4,7 @@ import sys
 import urllib.parse
 from collections import deque
 from dataclasses import asdict
+from pathlib import Path
 
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
@@ -25,6 +26,8 @@ Never print() in this process: stdout is the LSP channel. Log to stderr instead.
 server = LanguageServer("rune", "0.1.0")
 file_dict = {}  # file uri -> {(col, line): TableEntry}
 TRACE_PREVIEW_LENGTH = 3  # trace steps shown directly in the hover
+FAKE_CROSS_FILE = True    # TEMP: graft a chain from tests/random_source.py onto every graph (preview cross-file UI before imports exist)
+FAKE_FILE = (Path(__file__).parents[2] / "tests" / "random_source.py").as_uri()
 
 
 def create_type_table(uri: str, source: str):
@@ -65,6 +68,8 @@ def hover(ls: LanguageServer, params: types.HoverParams):
     if entry is None:
         return None
     graph = trace_graph(name, entry, uri)
+    if FAKE_CROSS_FILE:
+        graft_fake_file(graph)
     steps = graph["nodes"]
 
     # Preview the first few steps, each a link that jumps to its line (#L<line>)
@@ -123,6 +128,33 @@ def trace_graph(name: str, entry: TableEntry, file: str) -> dict:
             edges.append([ids[id(parent)], ids[id(child)]])
 
     return {"name": name, "nodes": nodes, "edges": edges}
+
+
+def graft_fake_file(graph: dict):
+    """
+    TEMP (FAKE_CROSS_FILE): pretends the deepest source node was imported from
+    tests/random_source.py, so the graph shows a second file. Delete once imports work.
+
+        seed = 7  ->  offset = seed * 2  ->  base = offset + seed  ->  deepest source
+    """
+    has_parents = {child for _, child in graph["edges"]}
+    target = [n for n in graph["nodes"] if n["id"] not in has_parents][-1]["id"]
+
+    first = len(graph["nodes"])
+    seed, offset, base = first, first + 1, first + 2
+    fake = [
+        ("seed = 7", 1, []),
+        ("offset = seed * 2", 2, [("seed", "int", 1), ("2", "int", None)]),
+        ("base = offset + seed", 3, [("offset", "int", 2), ("seed", "int", 1)]),
+    ]
+    for i, (code, line, operands) in enumerate(fake):
+        if not operands:
+            operands = [("7", "int", None)]
+        graph["nodes"].append({
+            "id": first + i, "code": code, "line": line, "type": "int", "file": FAKE_FILE,
+            "operands": [{"name": n, "type": t, "line": l} for n, t, l in operands],
+        })
+    graph["edges"] += [[seed, offset], [offset, base], [seed, base], [base, target]]
 
 
 # @server.feature(types.TEXT_DOCUMENT_DID_CLOSE)

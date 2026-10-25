@@ -214,7 +214,8 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, graph: Trac
     }
     .filter select:focus { outline: 1px solid var(--accent); }
     .filter select.active { border-color: var(--accent); }
-    #canvas .dim { opacity: 0.15; }
+    #canvas .node.dim, #canvas .cluster.dim { opacity: 0.35; }
+    #canvas path.dim { opacity: 0.18 !important; } /* beats the edge rule's opacity below; arrowheads fade with it */
     #canvas .node, #canvas .cluster, #canvas path { transition: opacity 0.2s ease; }
 
     /* ----- file boxes (Group by file) ----- */
@@ -450,7 +451,7 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, graph: Trac
     // Mermaid ids DOM elements as [prefix-]flowchart-n3-<k> (nodes), L_n1_n3_<k> (edges)
     // and [prefix-]f0 (file boxes), so map them back to graph ids
     const nodeIdOf = (el) => (el.id.match(/flowchart-(n\\d+)-\\d+$/) || [])[1];
-    const edgeEndsOf = (el) => el.id.match(/L[-_](n\\d+)[-_](n\\d+)[-_]\\d+$/);
+    const edgeEndsOf = (el) => (el.id + ' ' + (el.dataset.id || '')).match(/L[-_](n\\d+)[-_](n\\d+)/);
     const fileIndexOf = (el) => (el.id.match(/(?:^|-)f(\\d+)$/) || [])[1];
 
     // ----- node hover: operands ----- //
