@@ -1,18 +1,10 @@
-### Branch Descriptions
-
-- Backup: A secondary copy of master
-- Master: Source of truth, merged development into master
-- Development: The branch where work is being done
-- Main: The one for showing on the repo
-- Experimental: Feature driven development with Claude
-
 <p align="center"><img src="assets/maybe_logo.png" alt="Rune" width="700" /></p>
 
-<h1 align="center">Rune: A Language Server for Python</h1>
+<h1 align="center"> A Language Server for Python</h1>
 
 ### What's This About
-<p align="center"><img src="assets/docs/gecko.png" alt="Rune" width="700" /></p>
-<p align="center"><sub>Image credit: <a href="https://lbbonline.com/news/It-Feels-Good-to-GEICO">GEICO, via LBB Online</a></sub></p>
+<!-- <p align="center"><img src="assets/docs/gecko.png" alt="Rune" width="700" /></p>
+<p align="center"><sub>Image credit: <a href="https://lbbonline.com/news/It-Feels-Good-to-GEICO">GEICO, via LBB Online</a></sub></p> -->
 
 Python's dynamic typing makes it hard to tell a variable's type, especially in a large codebases & frameworks (like LangChain, SQLAlchemy, PyTorch).
 
@@ -135,3 +127,11 @@ Because the graph analysis runs topologically, every section of a program with a
 ## Status
 
 This project is a work in progress. Potential extensions include a cli type checker built on top of Rune's engine.
+
+### Branch Descriptions
+
+- Backup: A secondary copy of master
+- Master: Source of truth, merged development into master
+- Development: The branch where work is being done
+- Main: The one for showing on the repo
+- Experimental: Feature driven development with Claude

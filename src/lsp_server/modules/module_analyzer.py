@@ -1,6 +1,7 @@
 import ast
 from collections import deque
 
+from type_lattice import LatticeValue
 from lexical_environment import Environment
 from provenance_table import ProvenanceTableEntry
 from control_flow_graph import ControlFlowGraph
@@ -13,6 +14,8 @@ class ModuleAnalyzer():
         self.provenance_table: dict[tuple[int, int], ProvenanceTableEntry] = {
             # (col, lineo) = ProvenanceTableEntry(type, parents: list[ProvenanceTableEntry])
         }
+
+        self.import_table: dict = {}
 
         self.cfg_generator: CFGGenerator | None = None
         self.cfg: ControlFlowGraph | None = None
@@ -46,6 +49,12 @@ class ModuleAnalyzer():
     
     def analyze_code_block(self) -> None:
         pass
+
+    def parse_expr(stmt: ast.AST):
+        return
+
+    def evalute_expr() -> LatticeValue:
+        return
     
 if __name__=="__main__":
     module_analyzer = ModuleAnalyzer("tests/cfg_graph_test_cases/try_finally.py")
