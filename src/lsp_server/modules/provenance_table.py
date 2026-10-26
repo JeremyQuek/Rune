@@ -1,55 +1,39 @@
 import ast
 from dataclasses import dataclass, field
+from enum import Enum, auto
 
-from lexical_environment import Environment
+from lexical_environment import Key
 from type_lattice import LatticeValue
 
 """
-ProvenanceTable: (col, line) -> ProvenanceTableEntry, one per occurrence
-(use or definition) of a name. parents point to the entries the type was
-derived from, so following them gives the trace shown on hover.
+ProvenanceTable: Key -> TableEntry, one per occurrence (use or definition)
+of a name. parents are the keys of the entries the type is derived from, so
+following them gives the trace shown on hover.
 
-The Environment is the bookkeeper (what x is right now); this is the history.
+Types are resolved lazily: an entry starts unresolved, and get_type later
+resolves its parents, then evaluates its expr (the recipe) on their types.
+
+The Environment is the bookkeeper (which definition x refers to right now);
+this is the history.
 """
 
 
+class Origin(Enum):
+    NORMAL = auto()
+    PARAMETER = auto()
+    IMPORT = auto()
+    JOIN = auto()
+
+
 @dataclass(eq=False)         # compared by identity: entries are nodes in a DAG
-class ProvenanceTableEntry():
-    type: LatticeValue
-    parents: list["ProvenanceTableEntry"] = field(default_factory=list)
+class TableEntry():
+    symbol: str                                # "a"
+    expr: ast.expr | None                      # recipe: lhs -> its rhs, rhs use -> itself                    # a module-level binding
+    type: LatticeValue = field(default_factory=LatticeValue.unknown)
+    resolved: bool = False
+    parents: list[Key] = field(default_factory=list)   # keys, not entries, so re-analysis leaves no stale refs
+    origin: Origin = Origin.NORMAL
+    return_stmts: list[Key] | None = None              # function definitions only: keys of its return entries 
 
 
-ProvenanceTable = dict[tuple[int, int], ProvenanceTableEntry]   # (col, line) -> entry
-
-
-def add_rhs_to_provenance_table(provenance_table: ProvenanceTable, env: Environment,
-                                rhs: list[ast.Name]) -> list[ProvenanceTableEntry]:
-    """
-    For each rhs use (y at (5,5)): its parent is y's last assignment
-    (env.which(y) at (4,4)), looked up in the provenance table. The use gets
-    its own entry pointing to that parent. No parent (builtin / unknown) -> no parents.
-
-    Call BEFORE env.assign(x, ...), so in `x = x + 1` the rhs x is the old x.
-    Returns the rhs parents, which become the lhs parents.
-    """
-    rhs_parents = []
-    for name in rhs:
-        parent_entry = env.which(name.id)
-        parent_key = (parent_entry.col_offset, parent_entry.lineno) if parent_entry else None
-        parent_node = provenance_table.get(parent_key)
-
-        parents = [parent_node] if parent_node else []
-        provenance_table[(name.col_offset, name.lineno)] = ProvenanceTableEntry(env.get_type(parent_entry), parents)
-        rhs_parents.extend(parents)
-    return rhs_parents
-
-
-def add_lhs_to_provenance_table(provenance_table: ProvenanceTable, env: Environment,
-                                lhs: list[ast.Name], rhs_parents: list[ProvenanceTableEntry]) -> None:
-    """
-    For each lhs target (x): its type is its last assignment in env,
-    its parents are all the rhs parents. Call AFTER env.assign(x, ...).
-    """
-    for target in lhs:
-        _type = env.get_type(env.which(target.id))
-        provenance_table[(target.col_offset, target.lineno)] = ProvenanceTableEntry(_type, rhs_parents)
+ProvenanceTable = dict[Key, TableEntry]

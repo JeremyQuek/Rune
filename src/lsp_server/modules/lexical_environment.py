@@ -3,13 +3,12 @@ import symtable
 import uuid
 from dataclasses import dataclass
 
-from type_lattice import LatticeValue
-
 """
 Two tables, two jobs:
 
-    Environment (symbol tables)  -> the bookkeeper: what is x RIGHT NOW?
+    Environment (symbol tables)  -> the bookkeeper: which definition of x do reads see RIGHT NOW?
                                     one entry per name, overwritten on reassignment.
+                                    It stores keys only, never types.
 
     ProvenanceTable              -> the occurrences: where did the type at (col, line)
                                     come from? every use/definition gets an entry,
@@ -21,13 +20,17 @@ Python's own `symtable` module decides them up front for the whole file.
 
 BUILTIN_SCOPE_ID = "builtins"
 
+# Provenance table key of a definition:
+#   (col, line)             a real assignment
+#   ("builtins", name)      a builtin, treated as an implicit `from builtins import name`
+#   ("join", node_id, x)    a merge of several definitions at a CFG join
+Key = tuple[int | str, ...]
+
 
 @dataclass
 class SymbolTableEntry():
-    scope_id: str           
-    type: LatticeValue
-    lineno: int | None       # where it was last assigned, None for builtins
-    col_offset: int | None
+    scope_id: str
+    key: Key                 # the definition that reads of this name currently see
 
 
 @dataclass
@@ -52,8 +55,8 @@ class Environment():
         top = symtable.symtable(source, filename, "exec")
         self.symtables = self._index_symtables(top)   # (name, lineno) -> SymbolTable
         self.builtin = {
-            name: SymbolTableEntry(BUILTIN_SCOPE_ID, LatticeValue.of(type(value).__name__), None, None)
-            for name, value in vars(builtins).items()
+            name: SymbolTableEntry(BUILTIN_SCOPE_ID, (BUILTIN_SCOPE_ID, name))
+            for name in vars(builtins)
         }
         self.scopes = [Scope(str(uuid.uuid4()), top, {})]   # global scope
 
@@ -102,7 +105,7 @@ class Environment():
         return local
 
     def which(self, x: str) -> SymbolTableEntry | None:
-        """The entry x currently refers to, or None if it has no value yet."""
+        """The definition x currently refers to, or None if it has no value yet."""
         scope = self._scope_of(x)
         if scope is None:
             return None
@@ -112,19 +115,15 @@ class Environment():
             return self.builtin.get(x)
         return None
 
-    def get_type(self, entry: SymbolTableEntry | None) -> LatticeValue:
-        return entry.type if entry else LatticeValue.unknown()
-
-
-    def assign(self, x: str, _type: LatticeValue, lineno: int, col_offset: int) -> SymbolTableEntry | None:
+    def assign(self, x: str, key: Key) -> SymbolTableEntry | None:
         """
-        Bind x in the scope symtable says it belongs to. Replaces the entry
+        Point x at the definition `key`, in the scope symtable says x belongs to. Replaces the entry
         rather than mutating it, so branches sharing the old entry are
         unaffected. Never touches builtins: `list = 5` creates a global.
         """
         scope = self._scope_of(x)
         if scope is None:
             return None
-        entry = SymbolTableEntry(scope.id, _type, lineno, col_offset)
+        entry = SymbolTableEntry(scope.id, key)
         scope.table[x] = entry
         return entry
