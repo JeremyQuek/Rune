@@ -2,53 +2,62 @@
 
 - Backup: A secondary copy of master
 - Master: Source of truth, merged development into master
-- Development: The branch where work is actually being done
+- Development: The branch where work is being done
 - Main: The one for showing on the repo
-- Experimental: The one that uses heavy AI.
+- Experimental: Feature driven development with Claude
 
+<p align="center"><img src="assets/maybe_logo.png" alt="Rune" width="700" /></p>
 
-<h1 align="center">Rune: A Type Analzyer for Python</h1>
+<h1 align="center">Rune: A Language Server for Python</h1>
+
+### What's This About
 <p align="center"><img src="assets/docs/gecko.png" alt="Rune" width="700" /></p>
 <p align="center"><sub>Image credit: <a href="https://lbbonline.com/news/It-Feels-Good-to-GEICO">GEICO, via LBB Online</a></sub></p>
 
-### What's This About
-Python's dynamic typing makes it hard to tell what type a variable is in a large codebase (like LangChain, SQLAlchemy, PyTorch), and even harder to tell *where that type came from*.
+Python's dynamic typing makes it hard to tell a variable's type, especially in a large codebases & frameworks (like LangChain, SQLAlchemy, PyTorch).
 
 ```python
 def get_profile(session, user_id):
     result = session.query(User).filter_by(id=user_id).first() # What is the type of result?? 
 ```
 
-Rune began as a modest attempt to build a type checker of sorts. It remains a work in progress, but my hope is that it offers Python developers meaningful quality-of-life improvements in their day-to-day work.
+Rune began as a modest attempt to build a tool that enhances the dev experience for Python. While many type checkers and LSPs show useful hints, 
+Rune provides the full derivation history and an assignment graph for each variable, built on top of its own typing engine.
+
+It remains a work in progress, but my hope is that it offers QoL improvements for navigating codebases and inspecting types in Python.
 
 ## Rune's Features
 
-Rune is a VScode extension that runs as a language server to provide real time type analysis of your Python code.
 
-**You can view types on hover, and see their assignment trace.** 
+Rune runs as a VScode extension server that statically analyzes your code. 
+
+**Rune's main interface shows types on variable hover.** 
 
 <h4 align="center">Showing the type information and trace </h4>
 <p align="center"><img width="650"  src="assets/screenshots/img2.png" /></p>
 
-**Left clicking on "Show Full Trace" shows every line. Clicking on a line jumps to file and line.** 
+**The hover menu has a "Show Full Trace" that brings up every previous assignment.** 
 
 <h4 align="center"> Opening a full trace window with jump-to-file-line function </h4>
 <p align="center"><img width="650" src="assets/screenshots/img1.png" /></p>
 
-**"View as graph" generates a graph that shows the history of a variable and the flow of sources from different files to give a variable get its value** 
+**Rune's main feature  click is a Graph option to shows the history of a variable** 
 
 <h4 align="center"> Rune's Type Graph </h4>
 <p align="center"><img width="650" src="assets/screenshots/img3.png" /></p>
 
 This lets you manually inspect each node, and clicking on it jumps to that file and line for manual inspection.
 
-Rune implements on its own typing engine, and does not rely on any other existing software (MyPy, Pyright etc) to provide type information.
+Other graph features include type evaluations on hover and highlighting lines from a certain file.
+
+<h4 align="center"> Other Graph Features </h4>
+<p align="center"><img width="800" src="assets/screenshots/img7.png" /></p>
 
 
-## Project Architecture
+## Architecture
 
 <p align="center"><em>The project's architecture (Generated with AI from project brief & codebase) </em></p>
-<p align="center"><img src="assets/docs/rune_arch.png" alt="Rune Architecture" width="800" /></p>
+<p align="center"><img src="assets/docs/rune_archa.png" alt="Rune Architecture" width="800" /></p>
 
 The checker's architecture runs on three separate logical components. 
 
@@ -125,4 +134,4 @@ Because the graph analysis runs topologically, every section of a program with a
 
 ## Status
 
-This project is a work in progress. 
+This project is a work in progress. Potential extensions include a cli type checker built on top of Rune's engine.
