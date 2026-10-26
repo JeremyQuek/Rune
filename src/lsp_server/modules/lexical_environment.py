@@ -85,7 +85,9 @@ class Environment():
         been assigned in it yet. None if no enclosing scope binds a free x.
         Names symtable never saw in this scope are treated as global
         (then builtins), like Python does for an unbound name.
+        An attribute chain "a.b" belongs to the scope of its root name a.
         """
+        x = x.split(".")[0]
         local = self.scopes[-1]
         if x not in local.symtable.get_identifiers():
             return self.scopes[0]
@@ -120,10 +122,13 @@ class Environment():
         Point x at the definition `key`, in the scope symtable says x belongs to. Replaces the entry
         rather than mutating it, so branches sharing the old entry are
         unaffected. Never touches builtins: `list = 5` creates a global.
+        Assigning x also drops every longer chain: `a = ...` drops "a.b", "a.b.c".
         """
         scope = self._scope_of(x)
         if scope is None:
             return None
+        for chain in [name for name in scope.table if name.startswith(x + ".")]:
+            del scope.table[chain]
         entry = SymbolTableEntry(scope.id, key)
         scope.table[x] = entry
         return entry

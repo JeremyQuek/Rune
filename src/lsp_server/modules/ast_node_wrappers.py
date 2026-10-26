@@ -110,3 +110,17 @@ class ClassDefinitionEntry(Entry): pass
 
 class MatchEntry(BranchEntry): pass
 class CaseEntry(Entry): pass
+# --------- Provenance recipes --------- #
+
+class ElementOf(ast.expr):
+    """
+    Recipe for a name bound by unpacking or iteration, which has no expression of its own:
+        x, *y = e     x -> ElementOf(e, 0), y -> ElementOf(e, 1, rest=True)
+        for x in it   x -> ElementOf(it, None)
+    """
+    _fields = ('value',)
+
+    def __init__(self, value: ast.AST, index: int | None, rest: bool = False) -> None:
+        self.value = value
+        self.index = index
+        self.rest = rest
