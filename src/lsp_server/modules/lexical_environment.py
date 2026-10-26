@@ -48,7 +48,7 @@ class Environment():
     scopes is a stack of Scope, global at the bottom, local on top.
     builtins live outside the stack and are checked last for global names.
     """
-    def __init__(self, source: str, filename: str = "<file>"):
+    def __init__(self, source: str, filename: str = "<file>") -> None:
         top = symtable.symtable(source, filename, "exec")
         self.symtables = self._index_symtables(top)   # (name, lineno) -> SymbolTable
         self.builtin = {
@@ -57,7 +57,9 @@ class Environment():
         }
         self.scopes = [Scope(str(uuid.uuid4()), top, {})]   # global scope
 
-    def _index_symtables(self, table, index=None):
+    def _index_symtables(self, table: symtable.SymbolTable,
+                         index: dict[tuple[str, int], symtable.SymbolTable] | None = None,
+                         ) -> dict[tuple[str, int], symtable.SymbolTable]:
         index = {} if index is None else index
         for child in table.get_children():
             index[(child.get_name(), child.get_lineno())] = child

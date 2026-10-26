@@ -21,14 +21,15 @@ class Body(ast.AST):
     _fields = ('body',)
     _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
 
-    def __init__(self, body=None, lineno=0, col_offset=0, end_lineno=0, end_col_offset=0):
+    def __init__(self, body: list[ast.stmt] | None = None, lineno: int = 0, col_offset: int = 0,
+                 end_lineno: int = 0, end_col_offset: int = 0) -> None:
         self.body = body or []
         self.lineno = lineno
         self.col_offset = col_offset
         self.end_lineno = end_lineno
         self.end_col_offset = end_col_offset
 
-    def unparse(self):
+    def unparse(self) -> str:
         return "\n".join(ast.unparse(stmt) for stmt in self.body)
 
 class ModuleBody(Body): pass
@@ -49,14 +50,15 @@ class Entry(ast.AST):
     _fields = ('body',)
     _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
 
-    def __init__(self, body=None, lineno=0, col_offset=0, end_lineno=0, end_col_offset=0):
+    def __init__(self, body: list[ast.stmt] | None = None, lineno: int = 0, col_offset: int = 0,
+                 end_lineno: int = 0, end_col_offset: int = 0) -> None:
         self.body = body or []
         self.lineno = lineno
         self.col_offset = col_offset
         self.end_lineno = end_lineno
         self.end_col_offset = end_col_offset
 
-    def unparse(self):
+    def unparse(self) -> str:
         return "\n".join(ast.unparse(stmt) for stmt in self.body)
 
 class ExitKind(Enum):
@@ -78,10 +80,10 @@ class ExitKind(Enum):
     CASE = auto()
 
 class Exit(ast.AST):
-    def __init__(self, kind: ExitKind):
+    def __init__(self, kind: ExitKind) -> None:
         self.kind = kind
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Exit({self.kind.name})"
 
 class BranchEntry(Entry): pass

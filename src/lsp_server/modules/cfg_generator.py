@@ -30,18 +30,21 @@ class LoopContext():
 
 @dataclass(eq=False)
 class TryCatchContext():
-    finally_entry: object = None             # created up front so raises in the try can reach it
-    except_block: list = field(default_factory=list)
+    finally_entry: ast_node_wrappers.FinallyEntry | None = None   # created up front so raises in the try can reach it
+    except_block: list[tuple[ast.ExceptHandler, ast_node_wrappers.ExceptEntry]] = field(default_factory=list)
     raise_reaches_finally: bool = False      # if set, the finally's tails keep propagating the raise
 
 
+ScopeContext = IfElseContext | FunctionContext | ClassContext | LoopContext | TryCatchContext
+
+
 class CFGGenerator():
-    def __init__(self, ast: ast.AST, cfg: ControlFlowGraph):
+    def __init__(self, ast: ast.AST, cfg: ControlFlowGraph) -> None:
         self.cfg = cfg
         self.ast = ast
-        self.scope_stack = []
-    
-    def make_graph(self):
+        self.scope_stack: list[ScopeContext] = []
+
+    def make_graph(self) -> None:
         self._dfs(self.ast, ast_node_wrappers.ModuleEntry())
 
     _BODY_KIND_BY_ENTRY_TYPE = {
@@ -71,13 +74,13 @@ class CFGGenerator():
         ast_node_wrappers.CaseEntry: (ast_node_wrappers.ExitKind.CASE),
     }
 
-    def _get_body_type(self, parent: ast.AST):
+    def _get_body_type(self, parent: ast.AST) -> type[ast_node_wrappers.Body]:
         return self._BODY_KIND_BY_ENTRY_TYPE[type(parent)]
 
-    def _get_exit_kind(self, parent: ast.AST):
+    def _get_exit_kind(self, parent: ast.AST) -> ast_node_wrappers.ExitKind:
         return self._EXIT_KIND_BY_ENTRY_TYPE[type(parent)]
 
-    def _link_raise(self, node: ast.AST):
+    def _link_raise(self, node: ast.AST) -> None:
         """
         Links a raising node to wherever its exception could go next, walking outward:
         every handler of each enclosing try, then that try's finally if it has one.
@@ -121,7 +124,7 @@ class CFGGenerator():
                     try_catch_context.raise_reaches_finally = True
                     break
 
-    def _create_body(self, stmts: list[ast.AST], body_type: ast.AST) -> ast.AST:
+    def _create_body(self, stmts: list[ast.stmt], body_type: type[ast_node_wrappers.Body]) -> ast_node_wrappers.Body:
         return body_type(
             body=stmts,
             lineno=stmts[0].lineno,
@@ -130,7 +133,7 @@ class CFGGenerator():
             end_col_offset=stmts[-1].end_col_offset,
         )
 
-    def _dfs(self, ast_node: ast.AST, parent: ast.AST | None = None):
+    def _dfs(self, ast_node: ast.AST, parent: ast.AST | None = None) -> list[ast.AST]:
         """
         Recursively decomposes a code region into CFG layers, returning its exit frontier.
 

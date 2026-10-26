@@ -2,8 +2,12 @@ import ast
 from enum import Enum, auto
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import ast_node_wrappers
+
+if TYPE_CHECKING:  # annotation only, so the CFG doesn't import the type layer at runtime
+    from lexical_environment import Environment
 
 class NodeType(Enum):
     MODULE_ENTRY = auto()
@@ -37,14 +41,14 @@ class Node():
     node_type: NodeType
     is_boundary: bool = False
     ast_node: ast.AST | None = None
-    enviroment: object = None
-    next: list = field(default_factory=list)
+    enviroment: "Environment | None" = None
+    next: list["Node"] = field(default_factory=list)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.node_type.name
 
 class ControlFlowGraph():
-    mapping= {
+    mapping: dict[type[ast.AST], NodeType] = {
         ast.FunctionDef : NodeType.FUNCTION_DEFINITION,
         ast_node_wrappers.FunctionDefinitionEntry : NodeType.FUNCTION_DEFINITION,
         ast.ClassDef : NodeType.CLASS_DEFINITION,
@@ -80,30 +84,30 @@ class ControlFlowGraph():
         ast_node_wrappers.Exit: NodeType.EXIT,
         }
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.entry = Node(NodeType.MODULE_ENTRY, is_boundary=True)
-        self.nodes = {self.entry: self.entry}
-        self.edges=[]
-        self.adj = defaultdict(list)
-        self.indeg = defaultdict(int)
+        self.nodes: dict[ast.AST | Node, Node] = {self.entry: self.entry}   # ast node -> its CFG node
+        self.edges: list[list[Node]] = []
+        self.adj: defaultdict[Node, list[Node]] = defaultdict(list)
+        self.indeg: defaultdict[Node, int] = defaultdict(int)
 
         # For pretty print
         self._id_counter = 0
-        self._node_ids = {id(self.entry): 0}
-    
-    def insert(self, parent: ast.AST, child: ast.AST)->None:
+        self._node_ids: dict[int, int] = {id(self.entry): 0}
+
+    def insert(self, parent: ast.AST | None, child: ast.AST) -> None:
         u = self.entry if parent is None else self._get_node(parent) 
         v = self._get_node(child)
         u.next.append(v)
         self.edges.append([u,v])
     
-    def create_adjacency_list(self):
+    def create_adjacency_list(self) -> defaultdict[Node, list[Node]]:
         for (u,v) in self.edges:
             self.adj[u].append(v)
         
         return self.adj
     
-    def count_indeg(self): 
+    def count_indeg(self) -> defaultdict[Node, int]:
         for (u,v) in self.edges:
             self.indeg[v]+=1
             self.indeg[u]+=0 #Touch u
@@ -131,7 +135,7 @@ class ControlFlowGraph():
     Prints the edge list in a format pasteable into 
     graphonline.top/create_graph_by_edge_list for visual debugging.
     """
-    def _pretty_print(self):
+    def _pretty_print(self) -> None:
         
         for u, v in self.edges:
             print(f"{self._label(u)}-{self._label(v)}")

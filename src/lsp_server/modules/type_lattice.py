@@ -20,13 +20,15 @@ Unions wider than MAX_UNION_SIZE collapse to Any, which keeps the lattice
 finite so fixpoint iteration always terminates.
 """
 
+from collections.abc import Iterable
+
 MAX_UNION_SIZE = 5
 
 ANY = "Any"
 UNBOUND = "Unbound"
 
 class LatticeValue():
-    def __init__(self, types=()):
+    def __init__(self, types: Iterable[str] = ()) -> None:
         types = frozenset(types)
         if ANY in types or len(types) > MAX_UNION_SIZE:
             types = frozenset({ANY})
@@ -46,7 +48,7 @@ class LatticeValue():
     def is_unknown(self) -> bool:
         return not self.types
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         return isinstance(other, LatticeValue) and self.types == other.types
 
     def __hash__(self) -> int:

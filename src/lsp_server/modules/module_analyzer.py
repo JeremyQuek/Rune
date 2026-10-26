@@ -7,20 +7,22 @@ from control_flow_graph import ControlFlowGraph
 from cfg_generator import CFGGenerator
 
 class ModuleAnalyzer():
-    def __init__(self, filepath):
-        self.filepath: str = filepath
-        self.env = Environment(source=self.filepath)
-        self.provenance_table : dict[tuple[int, int]: ProvenanceTableEntry] = {
+    def __init__(self, filepath: str) -> None:
+        self.filepath = filepath
+        self.env: Environment | None = None   # built in process_file, once the source is read
+        self.provenance_table: dict[tuple[int, int], ProvenanceTableEntry] = {
             # (col, lineo) = ProvenanceTableEntry(type, parents: list[ProvenanceTableEntry])
         }
-        
-        self.cfg_generator = None
-        self.cfg = None
-    
-    def process_file(self):
+
+        self.cfg_generator: CFGGenerator | None = None
+        self.cfg: ControlFlowGraph | None = None
+
+    def process_file(self) -> None:
         with open(self.filepath, "r", encoding="utf-8") as f:
             source_code = f.read()
             module_ast = ast.parse(source_code, filename=self.filepath)
+
+        self.env = Environment(source_code, self.filepath)   # symtable parses the source text; the path is only for error messages
 
         self.cfg = ControlFlowGraph()
         self.cfg_generator = CFGGenerator(module_ast, self.cfg)
@@ -42,7 +44,7 @@ class ModuleAnalyzer():
                     q.append(v)  
         return
     
-    def analyze_code_block(self):
+    def analyze_code_block(self) -> None:
         pass
     
 if __name__=="__main__":

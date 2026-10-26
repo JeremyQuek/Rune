@@ -19,7 +19,10 @@ class ProvenanceTableEntry():
     parents: list["ProvenanceTableEntry"] = field(default_factory=list)
 
 
-def add_rhs_to_provenance_table(provenance_table: dict, env: Environment,
+ProvenanceTable = dict[tuple[int, int], ProvenanceTableEntry]   # (col, line) -> entry
+
+
+def add_rhs_to_provenance_table(provenance_table: ProvenanceTable, env: Environment,
                                 rhs: list[ast.Name]) -> list[ProvenanceTableEntry]:
     """
     For each rhs use (y at (5,5)): its parent is y's last assignment
@@ -41,7 +44,7 @@ def add_rhs_to_provenance_table(provenance_table: dict, env: Environment,
     return rhs_parents
 
 
-def add_lhs_to_provenance_table(provenance_table: dict, env: Environment,
+def add_lhs_to_provenance_table(provenance_table: ProvenanceTable, env: Environment,
                                 lhs: list[ast.Name], rhs_parents: list[ProvenanceTableEntry]) -> None:
     """
     For each lhs target (x): its type is its last assignment in env,
