@@ -33,7 +33,8 @@ class ModuleAnalyzer():
         # builtins are implicit imports: `from builtins import name`
         builtins_module = self._module_entry("builtins")
         for name in self.env.builtin:
-            self.provenance_table[("builtins", name)] = TableEntry(name, None, parents=[builtins_module])
+            self.provenance_table[("builtins", name)] = TableEntry(name, self._member_recipe("builtins", name),
+                                                                    parents=[builtins_module])
 
         for defn in ast.walk(module_ast):
             if isinstance(defn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -773,7 +774,7 @@ clear();
     return str(out)
 
 if __name__=="__main__":
-    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/cfg_graph_test_cases/try_finally.py") 
+    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/provenance_test_cases/import.py") 
     module_analyzer.process_file()
 
     visualize_file(module_analyzer)

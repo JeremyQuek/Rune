@@ -4,15 +4,10 @@ import uuid
 from dataclasses import dataclass
 
 """
-Two tables, two jobs:
-
     Environment (symbol tables)  -> the bookkeeper: which definition of x do reads see RIGHT NOW?
                                     one entry per name, overwritten on reassignment.
                                     It stores keys only, never types.
 
-    ProvenanceTable              -> the occurrences: where did the type at (col, line)
-                                    come from? every use/definition gets an entry,
-                                    and parents point to the entries it was derived from.
 
 Scope rules (local / enclosing / global) are not guessed from the walk:
 Python's own `symtable` module decides them up front for the whole file.
@@ -25,7 +20,6 @@ BUILTIN_SCOPE_ID = "builtins"
 #   ("builtins", name)      a builtin, treated as an implicit `from builtins import name`
 #   ("join", node_id, x)    a merge of several definitions at a CFG join
 Key = tuple[int | str, ...]
-
 
 @dataclass
 class SymbolTableEntry():

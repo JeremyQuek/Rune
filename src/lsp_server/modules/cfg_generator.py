@@ -1,6 +1,7 @@
 import ast
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+
 
 import ast_node_wrappers
 
@@ -37,9 +38,7 @@ class TryCatchContext():
     except_block: list[tuple[ast.ExceptHandler, ast_node_wrappers.ExceptEntry]] = field(default_factory=list)
     raise_reaches_finally: bool = False      # if set, the finally's tails keep propagating the raise
 
-
 ScopeContext = IfElseContext | FunctionContext | ClassContext | LoopContext | TryCatchContext
-
 
 class CFGGenerator():
     def __init__(self, ast: ast.AST, cfg: "ControlFlowGraph") -> None:

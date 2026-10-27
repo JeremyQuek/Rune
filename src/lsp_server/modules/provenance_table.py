@@ -5,16 +5,14 @@ from enum import Enum, auto
 from lexical_environment import Key
 from type_lattice import LatticeValue
 
+
 """
-ProvenanceTable: Key -> TableEntry, one per occurrence (use or definition)
-of a name. parents are the keys of the entries the type is derived from, so
-following them gives the trace shown on hover.
+ProvenanceTable              -> the occurrences: where did the type at (col, line)
+                                come from? every use/definition gets an entry,
+                                and parents point to the entries it was derived from.
 
 Types are resolved lazily: an entry starts unresolved, and get_type later
 resolves its parents, then evaluates its expr (the recipe) on their types.
-
-The Environment is the bookkeeper (which definition x refers to right now);
-this is the history.
 """
 
 

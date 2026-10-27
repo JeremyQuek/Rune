@@ -5,7 +5,6 @@ from io import StringIO
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "lsp_server", "modules"))
 from control_flow_graph import ControlFlowGraph
-from cfg_generator import CFGGenerator
 
 TESTS_DIR = os.path.join(os.path.dirname(__file__), "cfg_graph_test_cases")
 
@@ -21,15 +20,13 @@ def get_test_cases():
     return cases
 
 def run_walker(py_file):
-    cfg = ControlFlowGraph()
     with open(py_file, "r", encoding="utf-8") as f:
         tree = ast.parse(f.read())
-    walker = CFGGenerator(tree, cfg)
-    walker.make_graph()
+    cfg = ControlFlowGraph(tree)
     buf = StringIO()
     old_stdout = sys.stdout
     sys.stdout = buf
-    walker.cfg._pretty_print()
+    cfg._pretty_print()
     sys.stdout = old_stdout
     return set(buf.getvalue().strip().splitlines())
 

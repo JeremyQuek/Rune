@@ -110,6 +110,7 @@ class ClassDefinitionEntry(Entry): pass
 
 class MatchEntry(BranchEntry): pass
 class CaseEntry(Entry): pass
+
 # --------- Provenance recipes --------- #
 
 class ElementOf(ast.expr):

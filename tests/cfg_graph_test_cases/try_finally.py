@@ -1,6 +1,6 @@
 a=1
 try:
-    b=1
+    b=a.c.b.d
     raise Exceptiont
 except Exception as e: 
     c=1
