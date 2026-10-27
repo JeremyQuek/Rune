@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import ast_node_wrappers
+from cfg_generator import CFGGenerator
 
 if TYPE_CHECKING:  # annotation only, so the CFG doesn't import the type layer at runtime
     from lexical_environment import Environment
@@ -84,7 +85,7 @@ class ControlFlowGraph():
         ast_node_wrappers.Exit: NodeType.EXIT,
         }
 
-    def __init__(self) -> None:
+    def __init__(self, tree: ast.AST) -> None:
         self.entry = Node(NodeType.MODULE_ENTRY, is_boundary=True)
         self.nodes: dict[ast.AST | Node, Node] = {self.entry: self.entry}   # ast node -> its CFG node
         self.edges: list[list[Node]] = []
@@ -94,6 +95,9 @@ class ControlFlowGraph():
         # For pretty print
         self._id_counter = 0
         self._node_ids: dict[int, int] = {id(self.entry): 0}
+
+        self.generator = CFGGenerator(tree, self)
+        self.generator.make_graph()
 
     def insert(self, parent: ast.AST | None, child: ast.AST) -> None:
         u = self.entry if parent is None else self._get_node(parent) 

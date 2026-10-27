@@ -1,8 +1,11 @@
 import ast
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import ast_node_wrappers
-from control_flow_graph import ControlFlowGraph
+
+if TYPE_CHECKING:  # the graph owns the generator, so importing it here at runtime would be circular
+    from control_flow_graph import ControlFlowGraph
 
 """
 
@@ -39,7 +42,7 @@ ScopeContext = IfElseContext | FunctionContext | ClassContext | LoopContext | Tr
 
 
 class CFGGenerator():
-    def __init__(self, ast: ast.AST, cfg: ControlFlowGraph) -> None:
+    def __init__(self, ast: ast.AST, cfg: "ControlFlowGraph") -> None:
         self.cfg = cfg
         self.ast = ast
         self.scope_stack: list[ScopeContext] = []
@@ -706,11 +709,11 @@ class CFGGenerator():
         
 
 if __name__ == "__main__":
+    from control_flow_graph import ControlFlowGraph
+
     with open("tests/cfg_graph_test_cases/func_def.py", "r", encoding="utf-8") as f:
         tree = ast.parse(f.read())
 
-    cfg = ControlFlowGraph()
-    generator = CFGGenerator(tree, cfg)
-    generator.make_graph()
+    cfg = ControlFlowGraph(tree)
     cfg._pretty_print()
 

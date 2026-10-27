@@ -7,7 +7,6 @@ from type_lattice import LatticeValue
 from lexical_environment import Environment, Key
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from control_flow_graph import ControlFlowGraph, Node
-from cfg_generator import CFGGenerator
 from ast_node_wrappers import ElementOf, ForEntry
 
 class ModuleAnalyzer():
@@ -18,7 +17,6 @@ class ModuleAnalyzer():
 
         self.import_table: dict = {}
 
-        self.cfg_generator: CFGGenerator | None = None
         self.cfg: ControlFlowGraph | None = None
 
         self.nested: set[int] = set()   # ids of ast nodes inside a def/class body (skipped for now)
@@ -41,9 +39,7 @@ class ModuleAnalyzer():
             if isinstance(defn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 self.nested.update(id(n) for stmt in defn.body for n in ast.walk(stmt))
 
-        self.cfg = ControlFlowGraph()
-        self.cfg_generator = CFGGenerator(module_ast, self.cfg)
-        self.cfg_generator.make_graph()
+        self.cfg = ControlFlowGraph(module_ast)
         self.cfg._pretty_print()
         self._traverse_graph()
 
