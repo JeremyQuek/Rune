@@ -1,4 +1,6 @@
 import ast
+import io
+import tokenize
 from collections import deque
 
 from type_lattice import LatticeValue
@@ -20,11 +22,13 @@ class ModuleAnalyzer():
         self.cfg: ControlFlowGraph | None = None
 
         self.nested: set[int] = set()   # ids of ast nodes inside a def/class body (skipped for now)
+        self.source_lines: list[str] = []
 
     def process_file(self) -> None:
         with open(self.filepath, "r", encoding="utf-8") as f:
             source_code = f.read()
             module_ast = ast.parse(source_code, filename=self.filepath)
+        self.source_lines = source_code.splitlines()
 
         self.env = Environment(source_code, self.filepath)   # symtable parses the source text; the path is only for error messages
 
@@ -41,32 +45,32 @@ class ModuleAnalyzer():
         self.cfg_generator = CFGGenerator(module_ast, self.cfg)
         self.cfg_generator.make_graph()
         self.cfg._pretty_print()
+        self._traverse_graph()
 
+    def _traverse_graph(self):
+        # Topologically traverse the graph
         adj = self.cfg.create_adjacency_list()
         indeg = self.cfg.count_indeg()
 
-        # Topo Sort Traversal
         q = deque([u for u in adj if indeg[u]==0])
         while q:
             u = q.popleft()
-            self.analyze_code_block(u)
+            self._analyze_code_block(u)
             for v in adj[u]:
                 indeg[v]-=1
                 if indeg[v]==0:
                     q.append(v)  
         return
     
-    def analyze_code_block(self, node: Node) -> None:
+    def _analyze_code_block(self, node: Node) -> None:
         for stmt in getattr(node.ast_node, "body", None) or []:
             if id(stmt) in self.nested or any(id(c) in self.nested for c in ast.iter_child_nodes(stmt)):
                 continue   # function and class bodies: later
-            self.parse_expr(stmt, iterates=isinstance(node.ast_node, ForEntry))
+            self._parse_expr(stmt, iterates=isinstance(node.ast_node, ForEntry))
 
-    def parse_expr(self, stmt: ast.stmt, iterates: bool = False) -> None:
+    def _parse_expr(self, stmt: ast.stmt, iterates: bool = False) -> None:
         """
-        parse_expr() builds the provenance entries for one statement: use entries for the
-        names the RHS reads, then a definition entry for each LHS target, with edges from
-        the RHS reads to the LHS definition. It never evaluates: types are pulled later.
+        parse_expr() builds the file variable dependencies into the provenance table.
 
         General rules
 
@@ -171,7 +175,7 @@ class ModuleAnalyzer():
         │ match s: / case ... if g: │ reads of s, g (capture patterns deferred)                                              │
         └───────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────┘
 
-        IMPORTS (not built yet, see below)
+        IMPORTS
         import m                    m (IMPORT)                                   bound: m
         import m as k               m (IMPORT) ← k                               bound: k
         import m.a                  m (IMPORT) ← m.a                             bound: m
@@ -185,7 +189,7 @@ class ModuleAnalyzer():
         from . import a             . (IMPORT) ← .a                              bound: a
         from .m import a            . (IMPORT) ← .m ← .m.a                       bound: a
         from ..m import a           .. (IMPORT) ← ..m ← ..m.a                    bound: a
-        from m import *             m (IMPORT) ← m.*                             bound: none; unresolved reads fall back to m.* (latest first), then builtins
+        from m import *             skipped for now
         builtins (len)              builtins (IMPORT) ← builtins.len             bound: len
 
           - Every name in the import line gets its own entry, keyed at its position.
@@ -215,12 +219,10 @@ class ModuleAnalyzer():
 
         NOT BUILT YET (rules agreed, code doesn't follow them)
 
-          - IMPORTS above. The code currently makes one shared ("module", name) entry per
-            module, not bound and with no position, and binds each imported name to it:
-            import m → m (IMPORT); from m import a as k → k (recipe the alias). The
-            path segments (m, m.a in `from m.a import b`) get no entries of their own,
-            and `from m import *` is skipped.
-          - Relative roots are not resolved to absolute module names (needs ImportResolver).
+          - from m import *: m (IMPORT) ← m.*, bound: none; reads with no definition fall
+            back to m.* (latest first), then builtins.
+          - Relative roots (., ..) are resolved to a module by the ImportResolver, which
+            needs the importing file.
           - if t: / while t: → reads of t. The CFG's IfElseEntry/WhileLoopEntry carry no
             body, so the test never reaches parse_expr.
           - def f / class A targets are keyed at the def/class keyword, not the name
@@ -233,6 +235,7 @@ class ModuleAnalyzer():
             the module name.
           - Function bodies: params (PARAMETER, resolved if annotated or a literal
             default), return_stmts collected via a stack of function entries.
+
         """
         match stmt:
             case ast.Assign(targets=targets, value=value) if iterates:
@@ -275,20 +278,31 @@ class ModuleAnalyzer():
                                                                  parents=([old] if old else []) + parents))
 
             case ast.Import(names=names):
-                # import m: m is the module itself. `import a.b` binds a, `import a.b as k` binds k to a.b
+                # import m.a.b: m (IMPORT) <- m.a <- m.a.b, binds m;  `as k` adds k <- m.a.b, binds k
                 for alias in names:
-                    name = alias.asname or alias.name.split(".")[0]
-                    module = self._module_entry(alias.name if alias.asname else name)
-                    self._bind(name, self._key(alias), TableEntry(name, alias, origin=Origin.IMPORT, parents=[module]))
+                    parts = alias.name.split(".")
+                    keys = self._path([(part, (alias.col_offset + len(".".join(parts[:i])) + (i > 0), alias.lineno))
+                                       for i, part in enumerate(parts)])
+                    if alias.asname:
+                        self._bind(alias.asname, self._asname_key(alias),
+                                   TableEntry(alias.asname, None, parents=[keys[-1]]))
+                    else:
+                        self.env.assign(parts[0], keys[0])
 
-            case ast.ImportFrom(module=module, names=names, level=level):
-                # from m import a: a is member a of m
-                source = self._module_entry("." * level + (module or ""))
+            case ast.ImportFrom(names=names):
+                # from m.a import b as k: m (IMPORT) <- m.a <- m.a.b <- k, binds k
+                path = self._from_path(stmt)
+                receiver, receiver_key = path[-1][0], self._path(path)[-1]
                 for alias in names:
                     if alias.name == "*":
-                        continue
-                    name = alias.asname or alias.name
-                    self._bind(name, self._key(alias), TableEntry(name, alias, parents=[source]))
+                        continue   # star imports: later
+                    key = self._key(alias)
+                    self.provenance_table[key] = TableEntry(alias.name, self._member_recipe(receiver, alias.name),
+                                                            parents=[receiver_key])
+                    if alias.asname:
+                        self._bind(alias.asname, self._asname_key(alias), TableEntry(alias.asname, None, parents=[key]))
+                    else:
+                        self.env.assign(alias.name, key)
 
             case _:
                 # bare expressions, match subjects/guards, return, raise, assert, ...: reads only
@@ -324,12 +338,55 @@ class ModuleAnalyzer():
         return key
 
     def _module_entry(self, module: str) -> Key:
-        """Hidden entry for a module, shared by every import of it. Never bound in the env:
-        after `from m import a`, m is not a usable name."""
+        """Non-positional entry for a module that doesn't appear in the source (builtins)."""
         key = ("module", module)
         if key not in self.provenance_table:
             self.provenance_table[key] = TableEntry(module, None, origin=Origin.IMPORT)
         return key
+
+    # --------- Imports --------- #
+
+    def _path(self, segments: list[tuple[str, Key]]) -> list[Key]:
+        """m (IMPORT) <- m.a <- m.a.b: the root is the import, each later segment a member of the previous."""
+        for i, (symbol, key) in enumerate(segments):
+            if i == 0:
+                self.provenance_table[key] = TableEntry(symbol, None, origin=Origin.IMPORT)
+            else:
+                receiver, receiver_key = segments[i - 1]
+                self.provenance_table[key] = TableEntry(symbol, self._member_recipe(receiver, symbol),
+                                                        parents=[receiver_key])
+        return [key for _, key in segments]
+
+    def _from_path(self, stmt: ast.ImportFrom) -> list[tuple[str, Key]]:
+        """
+        The `m.a` in `from m.a import b`, with positions: ImportFrom.module is a plain string,
+        so they come from the source tokens. Leading dots are the root (`.`, `..`).
+        """
+        text = "\n".join(self.source_lines[stmt.lineno - 1:stmt.end_lineno])
+        segments: list[tuple[str, Key]] = []
+        started = named = False
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            position = (tok.start[1], stmt.lineno + tok.start[0] - 1)
+            if not started:
+                started = tok.type == tokenize.NAME and tok.string == "from" and position == self._key(stmt)
+            elif tok.type == tokenize.NAME:
+                if tok.string == "import":
+                    break
+                segments.append((tok.string, position))
+                named = True
+            elif tok.type == tokenize.OP and set(tok.string) == {"."} and not named:
+                if segments:
+                    segments[0] = (segments[0][0] + tok.string, segments[0][1])
+                else:
+                    segments.append((tok.string, position))
+        return segments
+
+    def _member_recipe(self, receiver: str, attr: str) -> ast.Attribute:
+        """Member attr of the entry's parent (the receiver is the parent, not looked up by name)."""
+        return ast.Attribute(value=ast.Name(id=receiver, ctx=ast.Load()), attr=attr, ctx=ast.Load())
+
+    def _asname_key(self, alias: ast.alias) -> Key:
+        return (alias.end_col_offset - len(alias.asname), alias.end_lineno)
 
     def _evaluated_at_definition(self, defn: ast.FunctionDef | ast.ClassDef) -> list[ast.expr]:
         if isinstance(defn, ast.ClassDef):
@@ -448,6 +505,279 @@ class ModuleAnalyzer():
             return None
         return ".".join([root.id] + [part.attr for part in reversed(spine)])
 
+# Test function
+def visualize_file(analyzer: ModuleAnalyzer, path: str | None = None) -> str:
+    """
+    Debug view of the provenance table: the source file with every entry boxed at its
+    (col, line), and an arrow from each parent to its child. Entries with no position
+    (builtins, modules) sit in a column on the right; only the ones something points to
+    are shown. Hover an entry to see its trace (parents, orange) and what uses it (cyan);
+    click to pin. Writes the page to `path` (default: the temp dir) and opens it.
+    """
+    import html, json, pathlib, tempfile, webbrowser
+
+    def kind(key: Key, entry: TableEntry) -> str:
+        # synthetic member recipes (m.a, builtins.len) have no position
+        if entry.origin == Origin.IMPORT or (isinstance(entry.expr, ast.Attribute) and getattr(entry.expr, "end_col_offset", None) is None):
+            return "import"
+        if isinstance(entry.expr, (ast.Name, ast.Attribute)) and analyzer._key(entry.expr) == key:
+            return "use"
+        return "def"
+
+    def describe(expr: ast.AST | None) -> str:
+        match expr:
+            case None:
+                return ""
+            case ElementOf(value=value, index=index, rest=rest):
+                which = "the rest" if rest else ("an element" if index is None else f"element {index}")
+                return f"{which} of {describe(value)}"
+            case ast.FunctionDef() | ast.AsyncFunctionDef():
+                return f"def {expr.name}(...)"
+            case ast.ClassDef():
+                return f"class {expr.name}"
+        try:
+            text = ast.unparse(expr)
+        except Exception:
+            text = type(expr).__name__
+        return text if len(text) <= 120 else text[:117] + "..."
+
+    table = analyzer.provenance_table
+    referenced = {parent for entry in table.values() for parent in entry.parents}
+    nodes = []
+    for key, entry in table.items():
+        positional = len(key) == 2 and all(isinstance(k, int) for k in key)
+        if not positional and key not in referenced:
+            continue   # the ~150 builtins nothing reads
+        nodes.append({
+            "id": json.dumps(list(key)),
+            "pos": list(key) if positional else None,
+            "symbol": entry.symbol,
+            "label": entry.symbol.rsplit(".", 1)[-1] or entry.symbol,   # the token at the position: b in a.b
+            "kind": kind(key, entry),
+            "origin": entry.origin.name,
+            "type": str(entry.type),
+            "resolved": entry.resolved,
+            "expr": describe(entry.expr),
+            "parents": [json.dumps(list(parent)) for parent in entry.parents],
+        })
+    data = {"file": analyzer.filepath, "lines": analyzer.source_lines, "nodes": nodes}
+
+    template = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Provenance: __TITLE__</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f7f9; --border: #d9dce1; --text: #1f2328; --muted: #6b7280;
+    --code: #4b5563; --edge: #c3c8d0; --use: #2563eb; --def: #059669; --import: #7c3aed;
+    --ext: #9ca3af; --trace: #ea580c; --usedby: #0891b2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
+      --code: #a3acb9; --edge: #39404d; --use: #60a5fa; --def: #34d399; --import: #a78bfa;
+      --ext: #6b7280; --trace: #fb923c; --usedby: #22d3ee;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex;
+           gap: 16px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+  .legend { display: flex; gap: 12px; color: var(--muted); flex-wrap: wrap; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px;
+                         border-radius: 2px; margin-right: 4px; vertical-align: -1px;
+                         border: 2px solid var(--c); }
+  main { display: flex; height: calc(100vh - 45px); }
+  #scroll { flex: 1; overflow: auto; }
+  #canvas { position: relative; }
+  pre { margin: 0; position: absolute; font: 13px/22px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #nums { color: var(--muted); text-align: right; opacity: .6; }
+  #code { color: var(--code); }
+  svg { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  path.edge { fill: none; stroke: var(--edge); stroke-width: 1.2; }
+  path.edge.trace { stroke: var(--trace); stroke-width: 2; }
+  path.edge.usedby { stroke: var(--usedby); stroke-width: 2; }
+  .mark { position: absolute; height: 22px; border: 1.5px solid var(--c); border-radius: 4px;
+          cursor: pointer; background: color-mix(in srgb, var(--c) 10%, transparent); }
+  .mark.use { --c: var(--use); } .mark.def { --c: var(--def); } .mark.import { --c: var(--import); }
+  .mark.ext { --c: var(--ext); font: 12px/19px ui-monospace, Menlo, monospace; padding: 0 6px;
+              white-space: nowrap; color: var(--text); width: auto !important; }
+  .dim .mark:not(.trace):not(.usedby):not(.self) { opacity: .25; }
+  .dim path.edge:not(.trace):not(.usedby) { opacity: .25; }
+  .mark.self { box-shadow: 0 0 0 2px var(--trace); }
+  .mark.trace { --c: var(--trace); }
+  .mark.usedby { --c: var(--usedby); }
+  aside { width: 340px; border-left: 1px solid var(--border); background: var(--panel);
+          padding: 14px 16px; overflow: auto; }
+  aside h2 { font-size: 13px; margin: 0 0 10px; }
+  dl { margin: 0; display: grid; grid-template-columns: 72px 1fr; gap: 6px 10px; }
+  dt { color: var(--muted); } dd { margin: 0; font-family: ui-monospace, Menlo, monospace;
+                                   word-break: break-word; }
+  a { color: var(--use); cursor: pointer; text-decoration: none; } a:hover { text-decoration: underline; }
+  .hint { color: var(--muted); }
+  @media (max-width: 700px) { main { flex-direction: column; height: auto; }
+                              aside { width: auto; border-left: 0; border-top: 1px solid var(--border); } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <div class="legend">
+    <span style="--c: var(--use)">use</span><span style="--c: var(--def)">def</span>
+    <span style="--c: var(--import)">import</span><span style="--c: var(--ext)">no position</span>
+    <span style="--c: var(--trace)">trace (parents)</span><span style="--c: var(--usedby)">used by</span>
+  </div>
+</header>
+<main>
+  <div id="scroll"><div id="canvas"><svg id="edges"></svg><pre id="nums"></pre><pre id="code"></pre></div></div>
+  <aside id="panel"></aside>
+</main>
+<script type="application/json" id="data">__DATA__</script>
+<script>
+const data = JSON.parse(document.getElementById("data").textContent);
+const LH = 22, PAD = 16;
+const canvas = document.getElementById("canvas"), svg = document.getElementById("edges");
+const panel = document.getElementById("panel");
+document.getElementById("title").textContent =
+  `${data.file} · ${data.nodes.filter(n => n.pos).length} entries in the source`;
+
+// character width of the code font
+const probe = document.createElement("pre");
+probe.style.cssText = "position:absolute;visibility:hidden;font:13px/22px ui-monospace,SFMono-Regular,Menlo,monospace";
+probe.textContent = "M".repeat(100);
+document.body.appendChild(probe);
+const CW = probe.getBoundingClientRect().width / 100;
+probe.remove();
+
+const nums = document.getElementById("nums"), code = document.getElementById("code");
+const numW = String(data.lines.length).length * CW;
+nums.textContent = data.lines.map((_, i) => i + 1).join("\n");
+nums.style.cssText = `left:${PAD}px;top:${PAD}px;width:${numW}px`;
+const codeX = PAD + numW + 16;
+code.textContent = data.lines.join("\n");
+code.style.cssText = `left:${codeX}px;top:${PAD}px`;
+
+// layout: positional entries over their token, the rest in a right-hand column
+const byId = new Map(data.nodes.map(n => [n.id, n]));
+const children = new Map(data.nodes.map(n => [n.id, []]));
+const maxLen = Math.max(20, ...data.lines.map(l => l.length));
+const extX = codeX + (maxLen + 10) * CW;
+let row = 0;
+for (const n of data.nodes) {
+  if (n.pos) {
+    n.x = codeX + n.pos[0] * CW - 2; n.y = PAD + (n.pos[1] - 1) * LH;
+    n.w = Math.max(1, n.label.length) * CW + 4;
+  } else {
+    n.x = extX; n.y = PAD + row++ * LH * 1.4; n.w = (n.symbol.length + 2) * CW + 12;
+  }
+  for (const p of n.parents) if (children.has(p)) children.get(p).push(n.id);
+}
+const height = Math.max(PAD * 2 + data.lines.length * LH, PAD * 2 + row * LH * 1.4);
+const width = extX + 260;
+canvas.style.cssText = `width:${width}px;height:${height}px`;
+svg.setAttribute("width", width); svg.setAttribute("height", height);
+
+const NS = "http://www.w3.org/2000/svg";
+const edges = [];
+for (const n of data.nodes) {
+  for (const p of n.parents) {
+    const from = byId.get(p);
+    if (!from) continue;
+    const x1 = from.x + from.w / 2, y1 = from.y + LH / 2, x2 = n.x + n.w / 2, y2 = n.y + LH / 2;
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+    const off = Math.min(80, len * 0.3) + 8;
+    const cx = (x1 + x2) / 2 + dy / len * off, cy = (y1 + y2) / 2 - dx / len * off;
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`);
+    path.setAttribute("class", "edge");
+    svg.appendChild(path);
+    edges.push({ from: p, to: n.id, el: path });
+  }
+}
+
+for (const n of data.nodes) {
+  const el = document.createElement("div");
+  el.className = `mark ${n.pos ? n.kind : "ext"}`;
+  el.style.cssText = `left:${n.x}px;top:${n.y + (n.pos ? 0 : 1)}px;width:${n.w}px`;
+  if (!n.pos) el.textContent = n.symbol;
+  el.title = `${n.symbol}  ${n.id}`;
+  el.addEventListener("mouseenter", () => { if (!pinned) select(n.id); });
+  el.addEventListener("click", e => { e.stopPropagation(); pinned = pinned === n.id ? null : n.id; select(n.id); });
+  canvas.appendChild(el);
+  n.el = el;
+}
+
+function walk(start, next) {
+  const seen = new Set(), stack = [...next(start)];
+  while (stack.length) {
+    const id = stack.pop();
+    if (seen.has(id) || !byId.has(id)) continue;
+    seen.add(id); stack.push(...next(id));
+  }
+  return seen;
+}
+
+let pinned = null;
+function select(id) {
+  const n = byId.get(id);
+  const trace = walk(id, x => byId.get(x)?.parents ?? []);
+  const usedBy = walk(id, x => children.get(x) ?? []);
+  document.body.classList.add("dim");
+  for (const m of data.nodes) {
+    m.el.classList.toggle("self", m.id === id);
+    m.el.classList.toggle("trace", trace.has(m.id));
+    m.el.classList.toggle("usedby", usedBy.has(m.id) && !trace.has(m.id));
+  }
+  for (const e of edges) {
+    e.el.classList.toggle("trace", (trace.has(e.from) || e.from === id) && (trace.has(e.to) || e.to === id));
+    e.el.classList.toggle("usedby", (usedBy.has(e.to)) && (usedBy.has(e.from) || e.from === id));
+  }
+  const link = x => byId.has(x) ? `<a data-id='${x}'>${esc(byId.get(x).symbol)} ${esc(x)}</a>` : `${esc(x)} (missing)`;
+  panel.innerHTML = `<h2>${esc(n.symbol)}${pinned === id ? " · pinned" : ""}</h2><dl>
+    <dt>key</dt><dd>${esc(n.id)}</dd>
+    <dt>kind</dt><dd>${n.kind}</dd>
+    <dt>origin</dt><dd>${n.origin}</dd>
+    <dt>type</dt><dd>${esc(n.type)}${n.resolved ? " (resolved)" : " (unresolved)"}</dd>
+    <dt>recipe</dt><dd>${esc(n.expr) || "—"}</dd>
+    <dt>parents</dt><dd>${n.parents.map(link).join("<br>") || "—"}</dd>
+    <dt>used by</dt><dd>${(children.get(id) ?? []).map(link).join("<br>") || "—"}</dd>
+  </dl>`;
+  panel.querySelectorAll("a[data-id]").forEach(a => a.addEventListener("click", () => {
+    pinned = a.dataset.id; select(a.dataset.id);
+    byId.get(a.dataset.id).el.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  }));
+}
+function clear() {
+  pinned = null; document.body.classList.remove("dim");
+  for (const m of data.nodes) m.el.classList.remove("self", "trace", "usedby");
+  for (const e of edges) e.el.classList.remove("trace", "usedby");
+  panel.innerHTML = `<h2>Provenance table</h2><p class="hint">Hover an entry to see its trace
+    (orange: what it was traced from) and what uses it (cyan). Click to pin, click empty space or
+    press Esc to clear.</p><p class="hint">${data.nodes.length} entries shown, ${edges.length} edges.</p>`;
+}
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+canvas.addEventListener("mouseleave", () => { if (!pinned) clear(); });
+document.getElementById("scroll").addEventListener("click", clear);
+document.addEventListener("keydown", e => { if (e.key === "Escape") clear(); });
+clear();
+</script>
+</body>
+</html>
+"""
+
+    name = pathlib.Path(analyzer.filepath).name
+    page = template.replace("__TITLE__", html.escape(name)).replace("__DATA__", json.dumps(data).replace("</", "<\\/"))
+    out = pathlib.Path(path) if path else pathlib.Path(tempfile.gettempdir()) / f"rune_{pathlib.Path(name).stem}.html"
+    out.write_text(page, encoding="utf-8")
+    webbrowser.open(out.as_uri())
+    return str(out)
+
 if __name__=="__main__":
-    module_analyzer = ModuleAnalyzer("tests/cfg_graph_test_cases/try_finally.py")
+    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/cfg_graph_test_cases/try_finally.py") 
     module_analyzer.process_file()
+
+    visualize_file(module_analyzer)
