@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/maybe_logo.png" alt="Rune" width="700" /></p>
+<p align="center"><img src="assets/rune.png" alt="Rune" width="700" /></p>
 
 <h1 align="center"> A Language Server for Python</h1>
 
