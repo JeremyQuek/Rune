@@ -125,3 +125,25 @@ class ElementOf(ast.expr):
         self.value = value
         self.index = index
         self.rest = rest
+
+
+class CaughtAs(ast.expr):
+    """
+    Recipe for `except E as e`: e is an instance of E (of each member, for a tuple of types).
+    name is kept because the AST stores it as a plain string, with no position.
+    """
+    _fields = ('type',)
+
+    def __init__(self, type: ast.expr, name: str) -> None:
+        self.type = type
+        self.name = name
+
+
+class EnteredFrom(ast.expr):
+    """
+    Recipe for `with cm as f`: f is cm.__enter__().
+    """
+    _fields = ('value',)
+
+    def __init__(self, value: ast.expr) -> None:
+        self.value = value

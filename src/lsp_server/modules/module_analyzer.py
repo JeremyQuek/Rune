@@ -1,5 +1,6 @@
 import ast
 import io
+import re
 import tokenize
 from collections import deque
 
@@ -7,7 +8,7 @@ from type_lattice import LatticeValue
 from lexical_environment import Environment, Key
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from control_flow_graph import ControlFlowGraph, Node
-from ast_node_wrappers import ElementOf, ForEntry
+from ast_node_wrappers import CaughtAs, ElementOf, EnteredFrom, ForEntry
 
 class ModuleAnalyzer():
     def __init__(self, filepath: str) -> None:
@@ -153,11 +154,13 @@ class ModuleAnalyzer():
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ del x                           │ nothing for now                                                                                                 │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-        │ class A(B):                     │ the CFG desugars it to Assign: reads of bases, keywords, decorators → def A (recipe the ClassDef). Body skipped │
-        │                                 │ for now                                                                                                         │
+        │ class A(B):                     │ the CFG desugars it to Assign: reads of bases, keywords, decorators → def A (recipe the ClassDef), keyed at the │
+        │                                 │ name A (found in the source: the AST stores it as a string). Body skipped for now                               │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-        │ def f(...)                      │ the CFG desugars it to Assign: reads of decorators and defaults → def f (recipe the FunctionDef). Body skipped  │
-        │                                 │ for now                                                                                                         │
+        │ def f(...) / async def f(...)   │ the CFG desugars it to Assign: reads of decorators and defaults → def f (recipe the FunctionDef), keyed at the  │
+        │                                 │ name f. Body skipped for now                                                                                    │
+        ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+        │ global a, b / nonlocal a, b     │ a read of each name (parent: the definition it refers to), keyed at the name, found in the source               │
         └─────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
         Control flow (from the CFG's entry nodes)
@@ -165,9 +168,13 @@ class ModuleAnalyzer():
         ┌───────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────┐
         │         Construct         │                                        Entries                                         │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
+        │ if / elif / while t:      │ the branch entry carries t: reads of t                                                 │
+        ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ for x in it:              │ the CFG desugars it to Assign(x, it): reads of it → def x (recipe ElementOf(it, None)) │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
-        │ except E as e:            │ desugared: read E → def e                                                              │
+        │ except E as e:            │ desugared: read E → def e (recipe CaughtAs(E)), keyed at e, found after `as`           │
+        ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
+        │ with a as f:              │ the CFG flattens it: read a → def f (recipe EnteredFrom(a)), then the body             │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ match s: / case ... if g: │ reads of s, g (capture patterns deferred)                                              │
         └───────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────┘
@@ -193,7 +200,7 @@ class ModuleAnalyzer():
           - Only the root (m, ., .., builtins) is IMPORT; the resolver turns it into a module.
           - x.y means member y of x (recipe: an Attribute whose receiver is the parent).
             If x is a module and y isn't in it, the submodule x.y is tried.
-          - k (from `as k`) has no recipe: its type is the type of the entry it renames.
+          - k (from `as k`) has the renamed name as its recipe (m, m.a, a), with the entry it renames as parent.
           - bound is the only name the code can then use; the others exist for hover and the trace.
 
         ATTRIBUTES: one entry per link
@@ -220,10 +227,6 @@ class ModuleAnalyzer():
             back to m.* (latest first), then builtins.
           - Relative roots (., ..) are resolved to a module by the ImportResolver, which
             needs the importing file.
-          - if t: / while t: → reads of t. The CFG's IfElseEntry/WhileLoopEntry carry no
-            body, so the test never reaches parse_expr.
-          - def f / class A targets are keyed at the def/class keyword, not the name
-            (the CFG builds that Assign at the keyword's column).
           - Branches: clone the env per arm; at a merge, a JOIN entry ("join", node_id, x)
             for each name whose key differs between the arms, missing in one arm → A | Unbound.
           - Class Exit: the class body's {member: key} + bases → GlobalNamespaceTable, row
@@ -241,11 +244,17 @@ class ModuleAnalyzer():
                 for target in targets:
                     self._define(target, ElementOf(value, None), parents)
 
-            case ast.Assign(targets=targets, value=ast.FunctionDef() | ast.ClassDef() as defn):
+            case ast.Assign(value=ast.FunctionDef() | ast.AsyncFunctionDef() | ast.ClassDef() as defn):
                 # desugared `def f` / `class A(B)`: only decorators, bases and defaults run here
                 parents = [key for expr in self._evaluated_at_definition(defn) for key in self._reads(expr)]
-                for target in targets:
-                    self._define(target, defn, parents)
+                [key] = self._get_declared_keys(defn)
+                self._bind(defn.name, key, TableEntry(defn.name, defn, parents=parents))
+
+            case ast.Assign(value=CaughtAs() as caught):
+                # desugared `except E as e`
+                parents = self._reads(caught.type)
+                [key] = self._get_declared_keys(caught)
+                self._bind(caught.name, key, TableEntry(caught.name, caught, parents=parents))
 
             case ast.Assign(targets=targets, value=value):
                 parents = self._reads(value)
@@ -282,7 +291,7 @@ class ModuleAnalyzer():
                                        for i, part in enumerate(parts)])
                     if alias.asname:
                         self._bind(alias.asname, self._asname_key(alias),
-                                   TableEntry(alias.asname, None, parents=[keys[-1]]))
+                                   TableEntry(alias.asname, ast.Name(id=alias.name, ctx=ast.Load()), parents=[keys[-1]]))
                     else:
                         self.env.assign(parts[0], keys[0])
 
@@ -297,9 +306,18 @@ class ModuleAnalyzer():
                     self.provenance_table[key] = TableEntry(alias.name, self._member_recipe(receiver, alias.name),
                                                             parents=[receiver_key])
                     if alias.asname:
-                        self._bind(alias.asname, self._asname_key(alias), TableEntry(alias.asname, None, parents=[key]))
+                        self._bind(alias.asname, self._asname_key(alias), TableEntry(alias.asname, ast.Name(id=alias.name, ctx=ast.Load()), parents=[key]))
                     else:
                         self.env.assign(alias.name, key)
+
+            case ast.Global(names=names) | ast.Nonlocal(names=names):
+                # global a / nonlocal a: a read of each name, so hovering it shows what it refers to
+                for name, key in zip(names, self._get_declared_keys(stmt)):
+                    col, line = key
+                    node = ast.Name(id=name, ctx=ast.Load(), lineno=line, col_offset=col,
+                                    end_lineno=line, end_col_offset=col + len(name))
+                    definition = self.env.which(name)
+                    self._use(name, key, node, definition.key if definition else None)
 
             case _:
                 # bare expressions, match subjects/guards, return, raise, assert, ...: reads only
@@ -389,6 +407,32 @@ class ModuleAnalyzer():
         if isinstance(defn, ast.ClassDef):
             return defn.decorator_list + defn.bases + [k.value for k in defn.keywords]
         return defn.decorator_list + defn.args.defaults + [d for d in defn.args.kw_defaults if d is not None]
+
+    def _get_declared_keys(self, node: ast.AST) -> list[Key]:
+        """
+        Keys of names the AST stores as plain strings, with no position of their own,
+        so they are found in the source line:
+            def f / class A          the name after the keyword
+            except E as e            the name after `as`, searched after E
+            global a, b / nonlocal   each name in order, after the keyword
+        """
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            line, start, patterns = node.lineno, node.col_offset, [rf"(?:def|class)\s+({node.name})\b"]
+        elif isinstance(node, CaughtAs):
+            line, start, patterns = node.type.end_lineno, node.type.end_col_offset, [rf"\bas\s+({node.name})\b"]
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            keyword = "global" if isinstance(node, ast.Global) else "nonlocal"
+            line, start, patterns = node.lineno, node.col_offset + len(keyword), [rf"\b({name})\b" for name in node.names]
+        else:
+            raise TypeError(f"no declared names in {type(node).__name__}")
+
+        text = self.source_lines[line - 1]
+        keys = []
+        for pattern in patterns:
+            found = re.compile(pattern).search(text, start)
+            keys.append((found.start(1), line))
+            start = found.end(1)
+        return keys
 
     # --------- Reads --------- #
 
@@ -517,7 +561,8 @@ def visualize_file(analyzer: ModuleAnalyzer, path: str | None = None) -> str:
         # synthetic member recipes (m.a, builtins.len) have no position
         if entry.origin == Origin.IMPORT or (isinstance(entry.expr, ast.Attribute) and getattr(entry.expr, "end_col_offset", None) is None):
             return "import"
-        if isinstance(entry.expr, (ast.Name, ast.Attribute)) and analyzer._key(entry.expr) == key:
+        if isinstance(entry.expr, (ast.Name, ast.Attribute)) and getattr(entry.expr, "col_offset", None) is not None \
+                and analyzer._key(entry.expr) == key:
             return "use"
         return "def"
 
@@ -532,6 +577,10 @@ def visualize_file(analyzer: ModuleAnalyzer, path: str | None = None) -> str:
                 return f"def {expr.name}(...)"
             case ast.ClassDef():
                 return f"class {expr.name}"
+            case CaughtAs(type=caught):
+                return f"an instance of {describe(caught)}"
+            case EnteredFrom(value=value):
+                return f"{describe(value)}.__enter__()"
         try:
             text = ast.unparse(expr)
         except Exception:
@@ -774,7 +823,7 @@ clear();
     return str(out)
 
 if __name__=="__main__":
-    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/provenance_test_cases/import.py") 
+    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/provenance_test_cases/name_positions.py") 
     module_analyzer.process_file()
 
     visualize_file(module_analyzer)

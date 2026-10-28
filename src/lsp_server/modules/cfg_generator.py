@@ -76,6 +76,36 @@ class CFGGenerator():
         ast_node_wrappers.CaseEntry: (ast_node_wrappers.ExitKind.CASE),
     }
 
+    def _inline_with(self, body: list[ast.stmt]) -> list[ast.stmt]:
+        """
+        `with a as f: body` runs straight through, so it is flattened into the enclosing
+        body: one Assign per item (f = EnteredFrom(a); a bare Expr if there's no `as`),
+        then the with's own statements. Exception suppression by __exit__ is ignored.
+        """
+        flat = []
+        for stmt in body:
+            if not isinstance(stmt, (ast.With, ast.AsyncWith)):
+                flat.append(stmt)
+                continue
+            for item in stmt.items:
+                expr = item.context_expr
+                span = dict(lineno=expr.lineno, col_offset=expr.col_offset,
+                            end_lineno=(item.optional_vars or expr).end_lineno,
+                            end_col_offset=(item.optional_vars or expr).end_col_offset)
+                if item.optional_vars is None:
+                    flat.append(ast.Expr(value=expr, **span))
+                else:
+                    flat.append(ast.Assign(targets=[item.optional_vars],
+                                           value=ast_node_wrappers.EnteredFrom(expr), **span))
+            flat.extend(self._inline_with(stmt.body))
+        return flat
+
+    def _test_entry(self, entry_type: type[ast_node_wrappers.BranchEntry], test: ast.expr) -> ast_node_wrappers.BranchEntry:
+        """if t: / while t: the test is evaluated on entry, so the branch entry carries it."""
+        span = dict(lineno=test.lineno, col_offset=test.col_offset,
+                    end_lineno=test.end_lineno, end_col_offset=test.end_col_offset)
+        return entry_type(body=[ast.Expr(value=test, **span)], **span)
+
     def _get_body_type(self, parent: ast.AST) -> type[ast_node_wrappers.Body]:
         return self._BODY_KIND_BY_ENTRY_TYPE[type(parent)]
 
@@ -166,7 +196,7 @@ class CFGGenerator():
         exits?" and composes them into the enclosing graph.
         """
 
-        code_body = ast_node.body
+        code_body = self._inline_with(ast_node.body)
         CustomBody = self._get_body_type(parent)
 
         # Step 1 split the list into sections
@@ -176,7 +206,7 @@ class CFGGenerator():
         for r in range(len(code_body)):
             cur_node = code_body[r]
             match cur_node:
-                case ast.FunctionDef():
+                case ast.FunctionDef() | ast.AsyncFunctionDef():
                     if r > l:
                         stmts = code_body[l:r]
                         cfg_nodes.append([CustomBody(
@@ -298,7 +328,7 @@ class CFGGenerator():
                             end_col_offset=stmts[-1].end_col_offset,
                         )])
                     
-                    if_else_entry = ast_node_wrappers.IfElseEntry()
+                    if_else_entry = self._test_entry(ast_node_wrappers.IfElseEntry, cur_node.test)   # elif is a nested If, so it gets its own
                     cfg_nodes.append([if_else_entry])
 
                     self.scope_stack.append(IfElseContext())
@@ -346,7 +376,7 @@ class CFGGenerator():
                             end_col_offset=stmts[-1].end_col_offset,
                         )])
                     
-                    while_loop_entry = ast_node_wrappers.WhileLoopEntry()
+                    while_loop_entry = self._test_entry(ast_node_wrappers.WhileLoopEntry, cur_node.test)
                     cfg_nodes.append([while_loop_entry])
 
                     self.scope_stack.append(LoopContext())
@@ -472,7 +502,7 @@ class CFGGenerator():
                                     end_lineno=handler.lineno,
                                     end_col_offset=handler.end_col_offset,
                                 )],
-                                value=handler.type,
+                                value=ast_node_wrappers.CaughtAs(handler.type, handler.name),
                                 lineno=handler.lineno,
                                 col_offset=handler.col_offset,
                                 end_lineno=handler.lineno,
