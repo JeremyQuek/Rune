@@ -1,6 +1,7 @@
 import builtins
 import symtable
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 
 """
@@ -72,6 +73,17 @@ class Environment():
     def pop_scope(self) -> Scope:
         return self.scopes.pop()
 
+    def clone(self) -> "Environment":
+        """
+        A copy for one arm of a branch. Shares the symtables and builtins (never written),
+        copies each scope's table; scope ids are kept, so the arms can be joined scope by scope.
+        """
+        env = object.__new__(Environment)
+        env.symtables = self.symtables
+        env.builtin = self.builtin
+        env.scopes = [Scope(scope.id, scope.symtable, dict(scope.table)) for scope in self.scopes]
+        return env
+
 
     def _scope_of(self, x: str) -> Scope | None:
         """
@@ -126,3 +138,31 @@ class Environment():
         entry = SymbolTableEntry(scope.id, key)
         scope.table[x] = entry
         return entry
+
+
+def join(envs: list[Environment], make_join: Callable[[str, list[Key | None]], Key]) -> Environment:
+    """
+    One environment from the arms merging into a CFG node (provenance_table.py, JOIN).
+    A name every arm points at the same key keeps it. Otherwise it gets ONE new key,
+    make_join(name, keys), where keys are the arms' distinct keys (None for an arm where
+    the name is unbound); the caller writes the JOIN entry, so the environment never
+    touches the provenance table.
+    A chain ("a.b") missing in some arm is dropped instead: that arm rebound a, so its
+    a.b is an attribute of the new a, and later reads go through a.
+    """
+    if len(envs) == 1:
+        return envs[0]
+    merged = envs[0].clone()
+    for depth, scope in enumerate(merged.scopes):
+        tables = [env.scopes[depth].table for env in envs]
+        scope.table = {}
+        for name in dict.fromkeys(name for table in tables for name in table):
+            entries = [table.get(name) for table in tables]
+            if "." in name and None in entries:
+                continue
+            keys = list(dict.fromkeys(entry.key if entry else None for entry in entries))
+            if len(keys) == 1:
+                scope.table[name] = entries[0]
+            else:
+                scope.table[name] = SymbolTableEntry(scope.id, make_join(name, keys))
+    return merged

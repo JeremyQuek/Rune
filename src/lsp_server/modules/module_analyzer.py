@@ -5,7 +5,7 @@ import tokenize
 from collections import deque
 
 from type_lattice import LatticeValue
-from lexical_environment import Environment, Key
+from lexical_environment import Environment, Key, join
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from control_flow_graph import ControlFlowGraph, Node
 from ast_node_wrappers import CaughtAs, ElementOf, EnteredFrom, ForEntry, ParameterOf
@@ -38,7 +38,7 @@ class ModuleAnalyzer():
                                                                     parents=[builtins_module])
 
         for defn in ast.walk(module_ast):
-            if isinstance(defn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(defn, ast.ClassDef):
                 self.nested.update(id(n) for stmt in defn.body for n in ast.walk(stmt))
 
         self.cfg = ControlFlowGraph(module_ast)
@@ -51,20 +51,31 @@ class ModuleAnalyzer():
         indeg = self.cfg.count_indeg()
 
         q = deque([u for u in adj if indeg[u]==0])
+        for u in q:
+            u.incoming_environments.append(self.env)   # the roots start from the module's environment
         while q:
             u = q.popleft()
+
+            # every parent has pushed by now: join them, then analyze on the result
+            node_id = self.cfg._node_ids[id(u)]
+            u.enviroment = join(u.incoming_environments, lambda x, keys: self._join_entry(node_id, x, keys))
+            u.incoming_environments = []
+            self.env = u.enviroment
             self._analyze_code_block(u)
-            for v in adj[u]:
+
+            # one child continues on the same environment; a branch gives each child a clone
+            children = adj[u]
+            for v in children:
+                v.incoming_environments.append(u.enviroment if len(children) == 1 else u.enviroment.clone())
                 indeg[v]-=1
                 if indeg[v]==0:
-                    q.append(v)  
+                    q.append(v)
         return
     
     def _analyze_code_block(self, node: Node) -> None:
         for stmt in getattr(node.ast_node, "body", None) or []:
-            if id(stmt) in self.nested or any(id(c) in self.nested for c in ast.iter_child_nodes(stmt)) \
-                    or isinstance(getattr(stmt, "value", None), ParameterOf):
-                continue   # function and class bodies (and their params): later
+            if id(stmt) in self.nested or any(id(c) in self.nested for c in ast.iter_child_nodes(stmt)):
+                continue   # class bodies: later
             self._parse_expr(stmt, iterates=isinstance(node.ast_node, ForEntry))
 
     def _parse_expr(self, stmt: ast.stmt, iterates: bool = False) -> None:
@@ -126,7 +137,7 @@ class ModuleAnalyzer():
         │ await, yield                          │ their operand │ type is Unknown later                 │
         └───────────────────────────────────────┴───────────────┴───────────────────────────────────────┘
 
-        Statements (module level; function and class bodies skipped)
+        Statements (class bodies skipped)
 
         ┌─────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
         │            Statement            │                                                     Entries                                                     │
@@ -159,15 +170,24 @@ class ModuleAnalyzer():
         │                                 │ name A (found in the source: the AST stores it as a string). Body skipped for now                               │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ def f(...) / async def f(...)   │ the CFG desugars it to Assign: reads of decorators and defaults → def f (recipe the FunctionDef), keyed at the  │
-        │                                 │ name f. Body skipped for now                                                                                    │
+        │                                 │ name f. The body runs on a clone of the env at the def (the def entry branches)                                 │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ global a, b / nonlocal a, b     │ a read of each name (parent: the definition it refers to), keyed at the name, found in the source               │
+        ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+        │ def f(a: T, b=e)                │ the CFG binds each param at the start of the body: def a (recipe ParameterOf, origin PARAMETER), keyed at       │
+        │                                 │ the name. Annotated → resolved T; else a literal default → its type; else a name default → parent: its          │
+        │                                 │ read on the def line                                                                                            │
         └─────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
         Control flow (from the CFG's entry nodes)
 
         ┌───────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────┐
         │         Construct         │                                        Entries                                         │
+        ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
+        │ several children (branch) │ each child gets a clone of the env (one child: the same env)                           │
+        ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
+        │ several parents (merge)   │ the parents' envs are joined: a name whose keys differ gets                            │
+        │                           │ one JOIN entry ("join", node_id, x); unbound in an arm → ("unbound", x)                │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ if / elif / while t:      │ the branch entry carries t: reads of t                                                 │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
@@ -228,14 +248,13 @@ class ModuleAnalyzer():
             back to m.* (latest first), then builtins.
           - Relative roots (., ..) are resolved to a module by the ImportResolver, which
             needs the importing file.
-          - Branches: clone the env per arm; at a merge, a JOIN entry ("join", node_id, x)
-            for each name whose key differs between the arms, missing in one arm → A | Unbound.
           - Class Exit: the class body's {member: key} + bases → GlobalNamespaceTable, row
             keyed by the class's definition key. Needs push_scope/pop_scope for the body.
           - Module Exit: the global scope {name: key} → GlobalNamespaceTable, row keyed by
             the module name.
-          - Function bodies: params (PARAMETER, resolved if annotated or a literal
-            default), return_stmts collected via a stack of function entries.
+          - Function bodies: return_stmts on the def entry, and a free name with no binding at the def
+            linked to its binding at the module exit (late binding).
+          - Loops: the back edge isn't joined into the loop head (fixpoint).
 
         """
         match stmt:
@@ -250,6 +269,17 @@ class ModuleAnalyzer():
                 parents = [key for expr in self._evaluated_at_definition(defn) for key in self._reads(expr)]
                 [key] = self._get_declared_keys(defn)
                 self._bind(defn.name, key, TableEntry(defn.name, defn, parents=parents))
+
+            case ast.Assign(targets=[ast.Name(id=name) as target], value=ParameterOf(arg=arg, default=default) as param):
+                # a parameter, bound at the start of the body: the annotation wins, else the default decides
+                entry = TableEntry(name, param, origin=Origin.PARAMETER)
+                if arg.annotation is not None:
+                    entry.type, entry.resolved = LatticeValue.of(ast.unparse(arg.annotation)), True
+                elif isinstance(default, ast.Constant):
+                    entry.type, entry.resolved = LatticeValue.of(type(default.value).__name__), True
+                elif isinstance(default, (ast.Name, ast.Attribute)):
+                    entry.parents = [self._key(default)]   # its read on the def line
+                self._bind(name, self._key(target), entry)
 
             case ast.Assign(value=CaughtAs() as caught):
                 # desugared `except E as e`
@@ -351,6 +381,18 @@ class ModuleAnalyzer():
     def _bind(self, symbol: str, key: Key, entry: TableEntry) -> Key:
         self.provenance_table[key] = entry
         self.env.assign(symbol, key)
+        return key
+
+    def _join_entry(self, node_id: int, symbol: str, keys: list[Key | None]) -> Key:
+        """The JOIN entry for symbol at merge node node_id; None (unbound in an arm) → ("unbound", symbol)."""
+        parents = []
+        for key in keys:
+            if key is None:
+                key = ("unbound", symbol)
+                self.provenance_table.setdefault(key, TableEntry(symbol, None))
+            parents.append(key)
+        key = ("join", node_id, symbol)
+        self.provenance_table[key] = TableEntry(symbol, None, parents=parents, origin=Origin.JOIN)
         return key
 
     def _module_entry(self, module: str) -> Key:

@@ -42,6 +42,7 @@ class Node():
     node_type: NodeType
     is_boundary: bool = False
     ast_node: ast.AST | None = None
+    incoming_environments: list["Environment"] = field(default_factory=list)   # pushed by the parents, joined when popped
     enviroment: "Environment | None" = None
     next: list["Node"] = field(default_factory=list)
 
