@@ -769,14 +769,3 @@ class CFGGenerator():
         
         # return the exit noe
         return cfg_nodes[-1]
-        
-
-if __name__ == "__main__":
-    from control_flow_graph import ControlFlowGraph
-
-    with open("tests/cfg_graph_test_cases/class.py", "r", encoding="utf-8") as f:
-        tree = ast.parse(f.read())
-
-    cfg = ControlFlowGraph(tree)
-    cfg._pretty_print()
-

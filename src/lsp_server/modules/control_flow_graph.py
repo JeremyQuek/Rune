@@ -146,4 +146,11 @@ class ControlFlowGraph():
         if node.node_type == NodeType.EXIT:
             return f"{''.join(word.capitalize() for word in node.ast_node.kind.name.split('_'))}Exit({nid})"
         return node.ast_node.__class__.__name__ + f"({nid})"
-       
+
+
+if __name__ == "__main__":
+    with open("tests/cfg_graph_test_cases/class.py", "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+
+    cfg = ControlFlowGraph(tree)
+    cfg._pretty_print()
