@@ -768,7 +768,7 @@ class CFGGenerator():
 if __name__ == "__main__":
     from control_flow_graph import ControlFlowGraph
 
-    with open("tests/cfg_graph_test_cases/func_def.py", "r", encoding="utf-8") as f:
+    with open("tests/cfg_graph_test_cases/class.py", "r", encoding="utf-8") as f:
         tree = ast.parse(f.read())
 
     cfg = ControlFlowGraph(tree)

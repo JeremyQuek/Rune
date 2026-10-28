@@ -8,7 +8,7 @@ from type_lattice import LatticeValue
 from lexical_environment import Environment, Key, join
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from control_flow_graph import ControlFlowGraph, Node
-from ast_node_wrappers import CaughtAs, ElementOf, EnteredFrom, ForEntry, ParameterOf
+from ast_node_wrappers import CaughtAs, ClassDefinitionEntry, ElementOf, EnteredFrom, Exit, ExitKind, ForEntry, ParameterOf
 
 class ModuleAnalyzer():
     def __init__(self, filepath: str) -> None:
@@ -20,7 +20,6 @@ class ModuleAnalyzer():
 
         self.cfg: ControlFlowGraph | None = None
 
-        self.nested: set[int] = set()   # ids of ast nodes inside a def/class body (skipped for now)
         self.source_lines: list[str] = []
 
     def process_file(self) -> None:
@@ -36,10 +35,6 @@ class ModuleAnalyzer():
         for name in self.env.builtin:
             self.provenance_table[("builtins", name)] = TableEntry(name, self._member_recipe("builtins", name),
                                                                     parents=[builtins_module])
-
-        for defn in ast.walk(module_ast):
-            if isinstance(defn, ast.ClassDef):
-                self.nested.update(id(n) for stmt in defn.body for n in ast.walk(stmt))
 
         self.cfg = ControlFlowGraph(module_ast)
         self.cfg._pretty_print()
@@ -61,7 +56,12 @@ class ModuleAnalyzer():
             u.enviroment = join(u.incoming_environments, lambda x, keys: self._join_entry(node_id, x, keys))
             u.incoming_environments = []
             self.env = u.enviroment
+            if isinstance(u.ast_node, Exit) and u.ast_node.kind == ExitKind.CLASS_DEFINITION:
+                self.env.pop_scope()   # leaving the class body
             self._analyze_code_block(u)
+            if isinstance(u.ast_node, ClassDefinitionEntry):
+                defn = u.ast_node.body[0].value   # the class name is bound in the enclosing scope, then the body runs in its own
+                self.env.push_scope(defn.name, defn.lineno)
 
             # one child continues on the same environment; a branch gives each child a clone
             children = adj[u]
@@ -74,8 +74,6 @@ class ModuleAnalyzer():
     
     def _analyze_code_block(self, node: Node) -> None:
         for stmt in getattr(node.ast_node, "body", None) or []:
-            if id(stmt) in self.nested or any(id(c) in self.nested for c in ast.iter_child_nodes(stmt)):
-                continue   # class bodies: later
             self._parse_expr(stmt, iterates=isinstance(node.ast_node, ForEntry))
 
     def _parse_expr(self, stmt: ast.stmt, iterates: bool = False) -> None:
@@ -137,7 +135,7 @@ class ModuleAnalyzer():
         │ await, yield                          │ their operand │ type is Unknown later                 │
         └───────────────────────────────────────┴───────────────┴───────────────────────────────────────┘
 
-        Statements (class bodies skipped)
+        Statements
 
         ┌─────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
         │            Statement            │                                                     Entries                                                     │
@@ -167,7 +165,7 @@ class ModuleAnalyzer():
         │ del x                           │ nothing for now                                                                                                 │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ class A(B):                     │ the CFG desugars it to Assign: reads of bases, keywords, decorators → def A (recipe the ClassDef), keyed at the │
-        │                                 │ name A (found in the source: the AST stores it as a string). Body skipped for now                               │
+        │                                 │ name A (found in the source: the AST stores it as a string). Body runs in the class's own scope                 │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ def f(...) / async def f(...)   │ the CFG desugars it to Assign: reads of decorators and defaults → def f (recipe the FunctionDef), keyed at the  │
         │                                 │ name f. The body runs on a clone of the env at the def (the def entry branches)                                 │
@@ -866,7 +864,7 @@ clear();
     return str(out)
 
 if __name__=="__main__":
-    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/provenance_test_cases/name_positions.py") 
+    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/cfg_graph_test_cases/class.py") 
     module_analyzer.process_file()
 
     visualize_file(module_analyzer)
