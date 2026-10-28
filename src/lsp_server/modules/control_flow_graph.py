@@ -28,19 +28,10 @@ class NodeType(Enum):
     FINALLY_BODY = auto()
     CASE_BODY = auto()
 
-# Boundary nodes mark where the lexical environment changes shape:
-# a new scope starts (module, function) or gets cloned per branch.
-BOUNDARY_TYPES = {
-    NodeType.MODULE_ENTRY,
-    NodeType.BRANCH_ENTRY,
-    NodeType.FUNCTION_DEFINITION,
-}
-
 # eq=False: nodes are dict keys (adj, indeg), so they hash by identity
 @dataclass(eq=False)
 class Node():
     node_type: NodeType
-    is_boundary: bool = False
     ast_node: ast.AST | None = None
     incoming_environments: list["Environment"] = field(default_factory=list)   # pushed by the parents, joined when popped
     enviroment: "Environment | None" = None
@@ -87,7 +78,7 @@ class ControlFlowGraph():
         }
 
     def __init__(self, tree: ast.AST) -> None:
-        self.entry = Node(NodeType.MODULE_ENTRY, is_boundary=True)
+        self.entry = Node(NodeType.MODULE_ENTRY)
         self.nodes: dict[ast.AST | Node, Node] = {self.entry: self.entry}   # ast node -> its CFG node
         self.edges: list[list[Node]] = []
         self.adj: defaultdict[Node, list[Node]] = defaultdict(list)
@@ -96,6 +87,9 @@ class ControlFlowGraph():
         # For pretty print
         self._id_counter = 0
         self._node_ids: dict[int, int] = {id(self.entry): 0}
+
+        # first node of each function body -> its def, so the walk knows where to push the function's scope
+        self.function_bodies: dict[Node, ast.FunctionDef | ast.AsyncFunctionDef] = {}
 
         self.generator = CFGGenerator(tree, self)
         self.generator.make_graph()
@@ -129,7 +123,7 @@ class ControlFlowGraph():
     # returns a Node of the correct type
     def _create_node(self, ast_node: ast.AST) -> Node:
         node_type = self.mapping[type(ast_node)]
-        node = Node(node_type, is_boundary=node_type in BOUNDARY_TYPES, ast_node=ast_node)
+        node = Node(node_type, ast_node=ast_node)
 
         # For pretty print
         self._id_counter += 1

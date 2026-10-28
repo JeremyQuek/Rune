@@ -19,7 +19,6 @@ class ModuleAnalyzer():
         self.import_table: dict = {}
 
         self.cfg: ControlFlowGraph | None = None
-
         self.source_lines: list[str] = []
 
     def process_file(self) -> None:
@@ -48,24 +47,33 @@ class ModuleAnalyzer():
         q = deque([u for u in adj if indeg[u]==0])
         for u in q:
             u.incoming_environments.append(self.env)   # the roots start from the module's environment
+        
         while q:
             u = q.popleft()
 
-            # every parent has pushed by now: join them, then analyze on the result
+            # Get the ID of the node
             node_id = self.cfg._node_ids[id(u)]
+
+            # Combine incoming envs such as on join branches
             u.enviroment = join(u.incoming_environments, lambda x, keys: self._join_entry(node_id, x, keys))
             u.incoming_environments = []
             self.env = u.enviroment
+
             if isinstance(u.ast_node, Exit) and u.ast_node.kind == ExitKind.CLASS_DEFINITION:
                 self.env.pop_scope()   # leaving the class body
+            if u in self.cfg.function_bodies:
+                defn = self.cfg.function_bodies[u]   # entering a function body: its env is the def's clone, no pop needed
+                self.env.push_scope(defn.name, defn.lineno)
+
             self._analyze_code_block(u)
+
             if isinstance(u.ast_node, ClassDefinitionEntry):
                 defn = u.ast_node.body[0].value   # the class name is bound in the enclosing scope, then the body runs in its own
                 self.env.push_scope(defn.name, defn.lineno)
 
-            # one child continues on the same environment; a branch gives each child a clone
             children = adj[u]
             for v in children:
+                # Share a ref of the env to a single child else clone the env to all children
                 v.incoming_environments.append(u.enviroment if len(children) == 1 else u.enviroment.clone())
                 indeg[v]-=1
                 if indeg[v]==0:
@@ -168,7 +176,7 @@ class ModuleAnalyzer():
         │                                 │ name A (found in the source: the AST stores it as a string). Body runs in the class's own scope                 │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ def f(...) / async def f(...)   │ the CFG desugars it to Assign: reads of decorators and defaults → def f (recipe the FunctionDef), keyed at the  │
-        │                                 │ name f. The body runs on a clone of the env at the def (the def entry branches)                                 │
+        │                                 │ name f. The body runs on a clone of the env at the def (the def entry branches), in the function's own scope    │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ global a, b / nonlocal a, b     │ a read of each name (parent: the definition it refers to), keyed at the name, found in the source               │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
@@ -265,7 +273,7 @@ class ModuleAnalyzer():
             case ast.Assign(value=ast.FunctionDef() | ast.AsyncFunctionDef() | ast.ClassDef() as defn):
                 # desugared `def f` / `class A(B)`: only decorators, bases and defaults run here
                 parents = [key for expr in self._evaluated_at_definition(defn) for key in self._reads(expr)]
-                [key] = self._get_declared_keys(defn)
+                [key] = self._get_declared_key_offset(defn)
                 self._bind(defn.name, key, TableEntry(defn.name, defn, parents=parents))
 
             case ast.Assign(targets=[ast.Name(id=name) as target], value=ParameterOf(arg=arg, default=default) as param):
@@ -282,7 +290,7 @@ class ModuleAnalyzer():
             case ast.Assign(value=CaughtAs() as caught):
                 # desugared `except E as e`
                 parents = self._reads(caught.type)
-                [key] = self._get_declared_keys(caught)
+                [key] = self._get_declared_key_offset(caught)
                 self._bind(caught.name, key, TableEntry(caught.name, caught, parents=parents))
 
             case ast.Assign(targets=targets, value=value):
@@ -341,7 +349,7 @@ class ModuleAnalyzer():
 
             case ast.Global(names=names) | ast.Nonlocal(names=names):
                 # global a / nonlocal a: a read of each name, so hovering it shows what it refers to
-                for name, key in zip(names, self._get_declared_keys(stmt)):
+                for name, key in zip(names, self._get_declared_key_offset(stmt)):
                     col, line = key
                     node = ast.Name(id=name, ctx=ast.Load(), lineno=line, col_offset=col,
                                     end_lineno=line, end_col_offset=col + len(name))
@@ -449,7 +457,7 @@ class ModuleAnalyzer():
             return defn.decorator_list + defn.bases + [k.value for k in defn.keywords]
         return defn.decorator_list + defn.args.defaults + [d for d in defn.args.kw_defaults if d is not None]
 
-    def _get_declared_keys(self, node: ast.AST) -> list[Key]:
+    def _get_declared_key_offset(self, node: ast.AST) -> list[Key]:
         """
         Keys of names the AST stores as plain strings, with no position of their own,
         so they are found in the source line:
@@ -650,211 +658,236 @@ def visualize_file(analyzer: ModuleAnalyzer, path: str | None = None) -> str:
     data = {"file": analyzer.filepath, "lines": analyzer.source_lines, "nodes": nodes}
 
     template = r"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Provenance: __TITLE__</title>
-<style>
-  :root {
-    --bg: #ffffff; --panel: #f6f7f9; --border: #d9dce1; --text: #1f2328; --muted: #6b7280;
-    --code: #4b5563; --edge: #c3c8d0; --use: #2563eb; --def: #059669; --import: #7c3aed;
-    --ext: #9ca3af; --trace: #ea580c; --usedby: #0891b2;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
-      --code: #a3acb9; --edge: #39404d; --use: #60a5fa; --def: #34d399; --import: #a78bfa;
-      --ext: #6b7280; --trace: #fb923c; --usedby: #22d3ee;
-    }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex;
-           gap: 16px; align-items: center; flex-wrap: wrap; }
-  header h1 { font-size: 14px; margin: 0; font-weight: 600; }
-  .legend { display: flex; gap: 12px; color: var(--muted); flex-wrap: wrap; }
-  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px;
-                         border-radius: 2px; margin-right: 4px; vertical-align: -1px;
-                         border: 2px solid var(--c); }
-  main { display: flex; height: calc(100vh - 45px); }
-  #scroll { flex: 1; overflow: auto; }
-  #canvas { position: relative; }
-  pre { margin: 0; position: absolute; font: 13px/22px ui-monospace, SFMono-Regular, Menlo, monospace; }
-  #nums { color: var(--muted); text-align: right; opacity: .6; }
-  #code { color: var(--code); }
-  svg { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
-  path.edge { fill: none; stroke: var(--edge); stroke-width: 1.2; }
-  path.edge.trace { stroke: var(--trace); stroke-width: 2; }
-  path.edge.usedby { stroke: var(--usedby); stroke-width: 2; }
-  .mark { position: absolute; height: 22px; border: 1.5px solid var(--c); border-radius: 4px;
-          cursor: pointer; background: color-mix(in srgb, var(--c) 10%, transparent); }
-  .mark.use { --c: var(--use); } .mark.def { --c: var(--def); } .mark.import { --c: var(--import); }
-  .mark.ext { --c: var(--ext); font: 12px/19px ui-monospace, Menlo, monospace; padding: 0 6px;
-              white-space: nowrap; color: var(--text); width: auto !important; }
-  .dim .mark:not(.trace):not(.usedby):not(.self) { opacity: .25; }
-  .dim path.edge:not(.trace):not(.usedby) { opacity: .25; }
-  .mark.self { box-shadow: 0 0 0 2px var(--trace); }
-  .mark.trace { --c: var(--trace); }
-  .mark.usedby { --c: var(--usedby); }
-  aside { width: 340px; border-left: 1px solid var(--border); background: var(--panel);
-          padding: 14px 16px; overflow: auto; }
-  aside h2 { font-size: 13px; margin: 0 0 10px; }
-  dl { margin: 0; display: grid; grid-template-columns: 72px 1fr; gap: 6px 10px; }
-  dt { color: var(--muted); } dd { margin: 0; font-family: ui-monospace, Menlo, monospace;
-                                   word-break: break-word; }
-  a { color: var(--use); cursor: pointer; text-decoration: none; } a:hover { text-decoration: underline; }
-  .hint { color: var(--muted); }
-  @media (max-width: 700px) { main { flex-direction: column; height: auto; }
-                              aside { width: auto; border-left: 0; border-top: 1px solid var(--border); } }
-</style>
-</head>
-<body>
-<header>
-  <h1 id="title"></h1>
-  <div class="legend">
-    <span style="--c: var(--use)">use</span><span style="--c: var(--def)">def</span>
-    <span style="--c: var(--import)">import</span><span style="--c: var(--ext)">no position</span>
-    <span style="--c: var(--trace)">trace (parents)</span><span style="--c: var(--usedby)">used by</span>
-  </div>
-</header>
-<main>
-  <div id="scroll"><div id="canvas"><svg id="edges"></svg><pre id="nums"></pre><pre id="code"></pre></div></div>
-  <aside id="panel"></aside>
-</main>
-<script type="application/json" id="data">__DATA__</script>
-<script>
-const data = JSON.parse(document.getElementById("data").textContent);
-const LH = 22, PAD = 16;
-const canvas = document.getElementById("canvas"), svg = document.getElementById("edges");
-const panel = document.getElementById("panel");
-document.getElementById("title").textContent =
-  `${data.file} · ${data.nodes.filter(n => n.pos).length} entries in the source`;
+        <html lang="en">
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Provenance: __TITLE__</title>
+        <style>
+        :root {
+            --bg: #ffffff; --panel: #f6f7f9; --border: #d9dce1; --text: #1f2328; --muted: #6b7280;
+            --code: #4b5563; --edge: #c3c8d0; --use: #2563eb; --def: #059669; --import: #7c3aed;
+            --ext: #9ca3af; --trace: #ea580c; --usedby: #0891b2;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+            --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
+            --code: #a3acb9; --edge: #39404d; --use: #60a5fa; --def: #34d399; --import: #a78bfa;
+            --ext: #6b7280; --trace: #fb923c; --usedby: #22d3ee;
+            }
+        }
+        :root[data-theme="dark"] {
+            --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
+            --code: #a3acb9; --edge: #39404d; --use: #60a5fa; --def: #34d399; --import: #a78bfa;
+            --ext: #6b7280; --trace: #fb923c; --usedby: #22d3ee;
+        }
+        #theme { margin-left: auto; background: var(--panel); color: var(--text); border: 1px solid var(--border);
+                 border-radius: 6px; padding: 3px 10px; font: inherit; cursor: pointer; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--bg); color: var(--text);
+                font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex;
+                gap: 16px; align-items: center; flex-wrap: wrap; }
+        header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+        .legend { display: flex; gap: 12px; color: var(--muted); flex-wrap: wrap; }
+        .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px;
+                                border-radius: 2px; margin-right: 4px; vertical-align: -1px;
+                                border: 2px solid var(--c); }
+        main { display: flex; height: calc(100vh - 45px); }
+        #scroll { flex: 1; overflow: auto; }
+        #canvas { position: relative; }
+        pre { margin: 0; position: absolute; font: 13px/22px ui-monospace, SFMono-Regular, Menlo, monospace; }
+        #nums { color: var(--muted); text-align: right; opacity: .6; }
+        #code { color: var(--code); }
+        svg { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+        path.edge { fill: none; stroke: var(--edge); stroke-width: 1.2; }
+        path.edge.trace { stroke: var(--trace); stroke-width: 2; }
+        path.edge.usedby { stroke: var(--usedby); stroke-width: 2; }
+        .mark { position: absolute; height: 22px; border: 1.5px solid var(--c); border-radius: 4px;
+                cursor: pointer; background: color-mix(in srgb, var(--c) 10%, transparent); }
+        .mark.use { --c: var(--use); } .mark.def { --c: var(--def); } .mark.import { --c: var(--import); }
+        .mark.ext { --c: var(--ext); font: 12px/19px ui-monospace, Menlo, monospace; padding: 0 6px;
+                    white-space: nowrap; color: var(--text); width: auto !important; }
+        .dim .mark:not(.trace):not(.usedby):not(.self) { opacity: .25; }
+        .dim path.edge:not(.trace):not(.usedby) { opacity: .25; }
+        .mark.self { box-shadow: 0 0 0 2px var(--trace); }
+        .mark.trace { --c: var(--trace); }
+        .mark.usedby { --c: var(--usedby); }
+        aside { width: 340px; border-left: 1px solid var(--border); background: var(--panel);
+                padding: 14px 16px; overflow: auto; }
+        aside h2 { font-size: 13px; margin: 0 0 10px; }
+        dl { margin: 0; display: grid; grid-template-columns: 72px 1fr; gap: 6px 10px; }
+        dt { color: var(--muted); } dd { margin: 0; font-family: ui-monospace, Menlo, monospace;
+                                        word-break: break-word; }
+        a { color: var(--use); cursor: pointer; text-decoration: none; } a:hover { text-decoration: underline; }
+        .hint { color: var(--muted); }
+        @media (max-width: 700px) { main { flex-direction: column; height: auto; }
+                                    aside { width: auto; border-left: 0; border-top: 1px solid var(--border); } }
+        </style>
+        </head>
+        <body>
+        <header>
+        <h1 id="title"></h1>
+        <div class="legend">
+            <span style="--c: var(--use)">use</span><span style="--c: var(--def)">def</span>
+            <span style="--c: var(--import)">import</span><span style="--c: var(--ext)">no position</span>
+            <span style="--c: var(--trace)">trace (parents)</span><span style="--c: var(--usedby)">used by</span>
+        </div>
+        <button id="theme" type="button"></button>
+        </header>
+        <main>
+        <div id="scroll"><div id="canvas"><svg id="edges"></svg><pre id="nums"></pre><pre id="code"></pre></div></div>
+        <aside id="panel"></aside>
+        </main>
+        <script type="application/json" id="data">__DATA__</script>
+        <script>
+        const data = JSON.parse(document.getElementById("data").textContent);
 
-// character width of the code font
-const probe = document.createElement("pre");
-probe.style.cssText = "position:absolute;visibility:hidden;font:13px/22px ui-monospace,SFMono-Regular,Menlo,monospace";
-probe.textContent = "M".repeat(100);
-document.body.appendChild(probe);
-const CW = probe.getBoundingClientRect().width / 100;
-probe.remove();
+        // theme: auto (follows the OS) -> light -> dark, remembered across reloads when storage allows
+        const themes = ["auto", "light", "dark"], themeButton = document.getElementById("theme");
+        function applyTheme(theme) {
+            if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+            else document.documentElement.dataset.theme = theme;
+            themeButton.textContent = { auto: "◐ auto", light: "☀ light", dark: "☾ dark" }[theme];
+            themeButton.dataset.theme = theme;
+        }
+        let savedTheme = "auto";
+        try { savedTheme = localStorage.getItem("rune-theme") || "auto"; } catch (e) {}
+        applyTheme(themes.includes(savedTheme) ? savedTheme : "auto");
+        themeButton.addEventListener("click", () => {
+            const next = themes[(themes.indexOf(themeButton.dataset.theme) + 1) % themes.length];
+            applyTheme(next);
+            try { localStorage.setItem("rune-theme", next); } catch (e) {}
+        });
+        const LH = 22, PAD = 16;
+        const canvas = document.getElementById("canvas"), svg = document.getElementById("edges");
+        const panel = document.getElementById("panel");
+        document.getElementById("title").textContent =
+        `${data.file} · ${data.nodes.filter(n => n.pos).length} entries in the source`;
 
-const nums = document.getElementById("nums"), code = document.getElementById("code");
-const numW = String(data.lines.length).length * CW;
-nums.textContent = data.lines.map((_, i) => i + 1).join("\n");
-nums.style.cssText = `left:${PAD}px;top:${PAD}px;width:${numW}px`;
-const codeX = PAD + numW + 16;
-code.textContent = data.lines.join("\n");
-code.style.cssText = `left:${codeX}px;top:${PAD}px`;
+        // character width of the code font
+        const probe = document.createElement("pre");
+        probe.style.cssText = "position:absolute;visibility:hidden;font:13px/22px ui-monospace,SFMono-Regular,Menlo,monospace";
+        probe.textContent = "M".repeat(100);
+        document.body.appendChild(probe);
+        const CW = probe.getBoundingClientRect().width / 100;
+        probe.remove();
 
-// layout: positional entries over their token, the rest in a right-hand column
-const byId = new Map(data.nodes.map(n => [n.id, n]));
-const children = new Map(data.nodes.map(n => [n.id, []]));
-const maxLen = Math.max(20, ...data.lines.map(l => l.length));
-const extX = codeX + (maxLen + 10) * CW;
-let row = 0;
-for (const n of data.nodes) {
-  if (n.pos) {
-    n.x = codeX + n.pos[0] * CW - 2; n.y = PAD + (n.pos[1] - 1) * LH;
-    n.w = Math.max(1, n.label.length) * CW + 4;
-  } else {
-    n.x = extX; n.y = PAD + row++ * LH * 1.4; n.w = (n.symbol.length + 2) * CW + 12;
-  }
-  for (const p of n.parents) if (children.has(p)) children.get(p).push(n.id);
-}
-const height = Math.max(PAD * 2 + data.lines.length * LH, PAD * 2 + row * LH * 1.4);
-const width = extX + 260;
-canvas.style.cssText = `width:${width}px;height:${height}px`;
-svg.setAttribute("width", width); svg.setAttribute("height", height);
+        const nums = document.getElementById("nums"), code = document.getElementById("code");
+        const numW = String(data.lines.length).length * CW;
+        nums.textContent = data.lines.map((_, i) => i + 1).join("\n");
+        nums.style.cssText = `left:${PAD}px;top:${PAD}px;width:${numW}px`;
+        const codeX = PAD + numW + 16;
+        code.textContent = data.lines.join("\n");
+        code.style.cssText = `left:${codeX}px;top:${PAD}px`;
 
-const NS = "http://www.w3.org/2000/svg";
-const edges = [];
-for (const n of data.nodes) {
-  for (const p of n.parents) {
-    const from = byId.get(p);
-    if (!from) continue;
-    const x1 = from.x + from.w / 2, y1 = from.y + LH / 2, x2 = n.x + n.w / 2, y2 = n.y + LH / 2;
-    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
-    const off = Math.min(80, len * 0.3) + 8;
-    const cx = (x1 + x2) / 2 + dy / len * off, cy = (y1 + y2) / 2 - dx / len * off;
-    const path = document.createElementNS(NS, "path");
-    path.setAttribute("d", `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`);
-    path.setAttribute("class", "edge");
-    svg.appendChild(path);
-    edges.push({ from: p, to: n.id, el: path });
-  }
-}
+        // layout: positional entries over their token, the rest in a right-hand column
+        const byId = new Map(data.nodes.map(n => [n.id, n]));
+        const children = new Map(data.nodes.map(n => [n.id, []]));
+        const maxLen = Math.max(20, ...data.lines.map(l => l.length));
+        const extX = codeX + (maxLen + 10) * CW;
+        let row = 0;
+        for (const n of data.nodes) {
+        if (n.pos) {
+            n.x = codeX + n.pos[0] * CW - 2; n.y = PAD + (n.pos[1] - 1) * LH;
+            n.w = Math.max(1, n.label.length) * CW + 4;
+        } else {
+            n.x = extX; n.y = PAD + row++ * LH * 1.4; n.w = (n.symbol.length + 2) * CW + 12;
+        }
+        for (const p of n.parents) if (children.has(p)) children.get(p).push(n.id);
+        }
+        const height = Math.max(PAD * 2 + data.lines.length * LH, PAD * 2 + row * LH * 1.4);
+        const width = extX + 260;
+        canvas.style.cssText = `width:${width}px;height:${height}px`;
+        svg.setAttribute("width", width); svg.setAttribute("height", height);
 
-for (const n of data.nodes) {
-  const el = document.createElement("div");
-  el.className = `mark ${n.pos ? n.kind : "ext"}`;
-  el.style.cssText = `left:${n.x}px;top:${n.y + (n.pos ? 0 : 1)}px;width:${n.w}px`;
-  if (!n.pos) el.textContent = n.symbol;
-  el.title = `${n.symbol}  ${n.id}`;
-  el.addEventListener("mouseenter", () => { if (!pinned) select(n.id); });
-  el.addEventListener("click", e => { e.stopPropagation(); pinned = pinned === n.id ? null : n.id; select(n.id); });
-  canvas.appendChild(el);
-  n.el = el;
-}
+        const NS = "http://www.w3.org/2000/svg";
+        const edges = [];
+        for (const n of data.nodes) {
+        for (const p of n.parents) {
+            const from = byId.get(p);
+            if (!from) continue;
+            const x1 = from.x + from.w / 2, y1 = from.y + LH / 2, x2 = n.x + n.w / 2, y2 = n.y + LH / 2;
+            const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+            const off = Math.min(80, len * 0.3) + 8;
+            const cx = (x1 + x2) / 2 + dy / len * off, cy = (y1 + y2) / 2 - dx / len * off;
+            const path = document.createElementNS(NS, "path");
+            path.setAttribute("d", `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`);
+            path.setAttribute("class", "edge");
+            svg.appendChild(path);
+            edges.push({ from: p, to: n.id, el: path });
+        }
+        }
 
-function walk(start, next) {
-  const seen = new Set(), stack = [...next(start)];
-  while (stack.length) {
-    const id = stack.pop();
-    if (seen.has(id) || !byId.has(id)) continue;
-    seen.add(id); stack.push(...next(id));
-  }
-  return seen;
-}
+        for (const n of data.nodes) {
+        const el = document.createElement("div");
+        el.className = `mark ${n.pos ? n.kind : "ext"}`;
+        el.style.cssText = `left:${n.x}px;top:${n.y + (n.pos ? 0 : 1)}px;width:${n.w}px`;
+        if (!n.pos) el.textContent = n.symbol;
+        el.title = `${n.symbol}  ${n.id}`;
+        el.addEventListener("mouseenter", () => { if (!pinned) select(n.id); });
+        el.addEventListener("click", e => { e.stopPropagation(); pinned = pinned === n.id ? null : n.id; select(n.id); });
+        canvas.appendChild(el);
+        n.el = el;
+        }
 
-let pinned = null;
-function select(id) {
-  const n = byId.get(id);
-  const trace = walk(id, x => byId.get(x)?.parents ?? []);
-  const usedBy = walk(id, x => children.get(x) ?? []);
-  document.body.classList.add("dim");
-  for (const m of data.nodes) {
-    m.el.classList.toggle("self", m.id === id);
-    m.el.classList.toggle("trace", trace.has(m.id));
-    m.el.classList.toggle("usedby", usedBy.has(m.id) && !trace.has(m.id));
-  }
-  for (const e of edges) {
-    e.el.classList.toggle("trace", (trace.has(e.from) || e.from === id) && (trace.has(e.to) || e.to === id));
-    e.el.classList.toggle("usedby", (usedBy.has(e.to)) && (usedBy.has(e.from) || e.from === id));
-  }
-  const link = x => byId.has(x) ? `<a data-id='${x}'>${esc(byId.get(x).symbol)} ${esc(x)}</a>` : `${esc(x)} (missing)`;
-  panel.innerHTML = `<h2>${esc(n.symbol)}${pinned === id ? " · pinned" : ""}</h2><dl>
-    <dt>key</dt><dd>${esc(n.id)}</dd>
-    <dt>kind</dt><dd>${n.kind}</dd>
-    <dt>origin</dt><dd>${n.origin}</dd>
-    <dt>type</dt><dd>${esc(n.type)}${n.resolved ? " (resolved)" : " (unresolved)"}</dd>
-    <dt>recipe</dt><dd>${esc(n.expr) || "—"}</dd>
-    <dt>parents</dt><dd>${n.parents.map(link).join("<br>") || "—"}</dd>
-    <dt>used by</dt><dd>${(children.get(id) ?? []).map(link).join("<br>") || "—"}</dd>
-  </dl>`;
-  panel.querySelectorAll("a[data-id]").forEach(a => a.addEventListener("click", () => {
-    pinned = a.dataset.id; select(a.dataset.id);
-    byId.get(a.dataset.id).el.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
-  }));
-}
-function clear() {
-  pinned = null; document.body.classList.remove("dim");
-  for (const m of data.nodes) m.el.classList.remove("self", "trace", "usedby");
-  for (const e of edges) e.el.classList.remove("trace", "usedby");
-  panel.innerHTML = `<h2>Provenance table</h2><p class="hint">Hover an entry to see its trace
-    (orange: what it was traced from) and what uses it (cyan). Click to pin, click empty space or
-    press Esc to clear.</p><p class="hint">${data.nodes.length} entries shown, ${edges.length} edges.</p>`;
-}
-const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-canvas.addEventListener("mouseleave", () => { if (!pinned) clear(); });
-document.getElementById("scroll").addEventListener("click", clear);
-document.addEventListener("keydown", e => { if (e.key === "Escape") clear(); });
-clear();
-</script>
-</body>
-</html>
-"""
+        function walk(start, next) {
+        const seen = new Set(), stack = [...next(start)];
+        while (stack.length) {
+            const id = stack.pop();
+            if (seen.has(id) || !byId.has(id)) continue;
+            seen.add(id); stack.push(...next(id));
+        }
+        return seen;
+        }
+
+        let pinned = null;
+        function select(id) {
+        const n = byId.get(id);
+        const trace = walk(id, x => byId.get(x)?.parents ?? []);
+        const usedBy = walk(id, x => children.get(x) ?? []);
+        document.body.classList.add("dim");
+        for (const m of data.nodes) {
+            m.el.classList.toggle("self", m.id === id);
+            m.el.classList.toggle("trace", trace.has(m.id));
+            m.el.classList.toggle("usedby", usedBy.has(m.id) && !trace.has(m.id));
+        }
+        for (const e of edges) {
+            e.el.classList.toggle("trace", (trace.has(e.from) || e.from === id) && (trace.has(e.to) || e.to === id));
+            e.el.classList.toggle("usedby", (usedBy.has(e.to)) && (usedBy.has(e.from) || e.from === id));
+        }
+        const link = x => byId.has(x) ? `<a data-id='${x}'>${esc(byId.get(x).symbol)} ${esc(x)}</a>` : `${esc(x)} (missing)`;
+        panel.innerHTML = `<h2>${esc(n.symbol)}${pinned === id ? " · pinned" : ""}</h2><dl>
+            <dt>key</dt><dd>${esc(n.id)}</dd>
+            <dt>kind</dt><dd>${n.kind}</dd>
+            <dt>origin</dt><dd>${n.origin}</dd>
+            <dt>type</dt><dd>${esc(n.type)}${n.resolved ? " (resolved)" : " (unresolved)"}</dd>
+            <dt>recipe</dt><dd>${esc(n.expr) || "—"}</dd>
+            <dt>parents</dt><dd>${n.parents.map(link).join("<br>") || "—"}</dd>
+            <dt>used by</dt><dd>${(children.get(id) ?? []).map(link).join("<br>") || "—"}</dd>
+        </dl>`;
+        panel.querySelectorAll("a[data-id]").forEach(a => a.addEventListener("click", () => {
+            pinned = a.dataset.id; select(a.dataset.id);
+            byId.get(a.dataset.id).el.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+        }));
+        }
+        function clear() {
+        pinned = null; document.body.classList.remove("dim");
+        for (const m of data.nodes) m.el.classList.remove("self", "trace", "usedby");
+        for (const e of edges) e.el.classList.remove("trace", "usedby");
+        panel.innerHTML = `<h2>Provenance table</h2><p class="hint">Hover an entry to see its trace
+            (orange: what it was traced from) and what uses it (cyan). Click to pin, click empty space or
+            press Esc to clear.</p><p class="hint">${data.nodes.length} entries shown, ${edges.length} edges.</p>`;
+        }
+        const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+        canvas.addEventListener("mouseleave", () => { if (!pinned) clear(); });
+        document.getElementById("scroll").addEventListener("click", clear);
+        document.addEventListener("keydown", e => { if (e.key === "Escape") clear(); });
+        clear();
+        </script>
+        </body>
+        </html>
+        """
 
     name = pathlib.Path(analyzer.filepath).name
     page = template.replace("__TITLE__", html.escape(name)).replace("__DATA__", json.dumps(data).replace("</", "<\\/"))
@@ -864,7 +897,7 @@ clear();
     return str(out)
 
 if __name__=="__main__":
-    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/cfg_graph_test_cases/class.py") 
+    module_analyzer = ModuleAnalyzer("src/lsp_server/modules/simple_file_analyzer.py") 
     module_analyzer.process_file()
 
     visualize_file(module_analyzer)

@@ -1,6 +1,7 @@
 import builtins
 import symtable
 import uuid
+from enum import Enum, auto
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -22,20 +23,27 @@ BUILTIN_SCOPE_ID = "builtins"
 #   ("join", node_id, x)    a merge of several definitions at a CFG join
 Key = tuple[int | str, ...]
 
+class ScopeType(Enum):
+    MODULE = auto()
+    FUNCTION = auto()
+    CLASS = auto()
+
 @dataclass
 class SymbolTableEntry():
     scope_id: str
     key: Key                 # the definition that reads of this name currently see
 
-
 @dataclass
 class Scope():
-    id: str                          # uuid4
+    scope_id: str                          # uuid4
+    scope_name: str                        # name of the class or function ("top" for the module)
+    scope_type: ScopeType                  # module, function or class
     symtable: symtable.SymbolTable   # Python's scope analysis for this scope
     table: dict[str, SymbolTableEntry]
 
+
     def is_class(self) -> bool:
-        return self.symtable.get_type() == "class"
+        return self.scope_type == ScopeType.CLASS
 
     def declares_local(self, x: str) -> bool:
         return x in self.symtable.get_identifiers() and self.symtable.lookup(x).is_local()
@@ -53,7 +61,7 @@ class Environment():
             name: SymbolTableEntry(BUILTIN_SCOPE_ID, (BUILTIN_SCOPE_ID, name))
             for name in vars(builtins)
         }
-        self.scopes = [Scope(str(uuid.uuid4()), top, {})]   # global scope
+        self.scopes = [Scope(str(uuid.uuid4()), top.get_name(), ScopeType.MODULE, top, {})]   # global scope
 
     def _index_symtables(self, table: symtable.SymbolTable,
                          index: dict[tuple[str, int], symtable.SymbolTable] | None = None,
@@ -66,7 +74,9 @@ class Environment():
 
     def push_scope(self, name: str, lineno: int) -> Scope:
         """Enter the function/class `name` defined on `lineno`."""
-        scope = Scope(str(uuid.uuid4()), self.symtables[(name, lineno)], {})
+        table = self.symtables[(name, lineno)]
+        scope_type = ScopeType.CLASS if table.get_type() == "class" else ScopeType.FUNCTION
+        scope = Scope(str(uuid.uuid4()), name, scope_type, table, {})
         self.scopes.append(scope)
         return scope
 
@@ -81,7 +91,8 @@ class Environment():
         env = object.__new__(Environment)
         env.symtables = self.symtables
         env.builtin = self.builtin
-        env.scopes = [Scope(scope.id, scope.symtable, dict(scope.table)) for scope in self.scopes]
+        env.scopes = [Scope(scope.scope_id, scope.scope_name, scope.scope_type, scope.symtable, dict(scope.table))
+                      for scope in self.scopes]
         return env
 
 
@@ -135,7 +146,7 @@ class Environment():
             return None
         for chain in [name for name in scope.table if name.startswith(x + ".")]:
             del scope.table[chain]
-        entry = SymbolTableEntry(scope.id, key)
+        entry = SymbolTableEntry(scope.scope_id, key)
         scope.table[x] = entry
         return entry
 
@@ -164,5 +175,5 @@ def join(envs: list[Environment], make_join: Callable[[str, list[Key | None]], K
             if len(keys) == 1:
                 scope.table[name] = entries[0]
             else:
-                scope.table[name] = SymbolTableEntry(scope.id, make_join(name, keys))
+                scope.table[name] = SymbolTableEntry(scope.scope_id, make_join(name, keys))
     return merged

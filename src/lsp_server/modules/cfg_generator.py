@@ -286,6 +286,12 @@ class CFGGenerator():
                     self._dfs(func_body, parent=func_entry)
                     self.scope_stack.pop()
 
+                    # right after the body is built, the def entry's only edge goes into the body
+                    entry_node = self.cfg.nodes[func_entry]
+                    for u, v in self.cfg.edges:
+                        if u is entry_node:
+                            self.cfg.function_bodies[v] = cur_node
+
                     l = r+1
 
                 case ast.ClassDef():
