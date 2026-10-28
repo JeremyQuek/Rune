@@ -8,7 +8,7 @@ from type_lattice import LatticeValue
 from lexical_environment import Environment, Key
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from control_flow_graph import ControlFlowGraph, Node
-from ast_node_wrappers import CaughtAs, ElementOf, EnteredFrom, ForEntry
+from ast_node_wrappers import CaughtAs, ElementOf, EnteredFrom, ForEntry, ParameterOf
 
 class ModuleAnalyzer():
     def __init__(self, filepath: str) -> None:
@@ -62,8 +62,9 @@ class ModuleAnalyzer():
     
     def _analyze_code_block(self, node: Node) -> None:
         for stmt in getattr(node.ast_node, "body", None) or []:
-            if id(stmt) in self.nested or any(id(c) in self.nested for c in ast.iter_child_nodes(stmt)):
-                continue   # function and class bodies: later
+            if id(stmt) in self.nested or any(id(c) in self.nested for c in ast.iter_child_nodes(stmt)) \
+                    or isinstance(getattr(stmt, "value", None), ParameterOf):
+                continue   # function and class bodies (and their params): later
             self._parse_expr(stmt, iterates=isinstance(node.ast_node, ForEntry))
 
     def _parse_expr(self, stmt: ast.stmt, iterates: bool = False) -> None:

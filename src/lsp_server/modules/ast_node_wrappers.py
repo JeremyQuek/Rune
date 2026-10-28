@@ -147,3 +147,19 @@ class EnteredFrom(ast.expr):
 
     def __init__(self, value: ast.expr) -> None:
         self.value = value
+
+
+class ParameterOf(ast.expr):
+    """
+    Recipe for a function parameter, bound at the start of the body:
+        def f(a: int, b=0, *args, c, **kw)
+    arg is the ast.arg (name, annotation), default its default (or None), kind one of
+    "positional", "vararg", "keyword", "kwarg". No fields: the annotation and default
+    are evaluated where the def is, not in the body.
+    """
+    _fields = ()
+
+    def __init__(self, arg: ast.arg, default: ast.expr | None, kind: str) -> None:
+        self.arg = arg
+        self.default = default
+        self.kind = kind

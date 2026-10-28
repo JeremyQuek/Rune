@@ -100,6 +100,33 @@ class CFGGenerator():
             flat.extend(self._inline_with(stmt.body))
         return flat
 
+    def _parameters(self, args: ast.arguments) -> list[ast.Assign]:
+        """One Assign per parameter, in signature order, each target at the param's name."""
+        positional = args.posonlyargs + args.args
+        defaults = [None] * (len(positional) - len(args.defaults)) + args.defaults
+        params = [(arg, default, "positional") for arg, default in zip(positional, defaults)]
+        if args.vararg:
+            params.append((args.vararg, None, "vararg"))
+        params += [(arg, default, "keyword") for arg, default in zip(args.kwonlyargs, args.kw_defaults)]
+        if args.kwarg:
+            params.append((args.kwarg, None, "kwarg"))
+
+        return [ast.Assign(
+                    targets=[ast.Name(
+                        id=arg.arg,
+                        ctx=ast.Store(),
+                        lineno=arg.lineno,
+                        col_offset=arg.col_offset,
+                        end_lineno=arg.lineno,
+                        end_col_offset=arg.col_offset + len(arg.arg),
+                    )],
+                    value=ast_node_wrappers.ParameterOf(arg, default, kind),
+                    lineno=arg.lineno,
+                    col_offset=arg.col_offset,
+                    end_lineno=arg.end_lineno,
+                    end_col_offset=arg.end_col_offset,
+                ) for arg, default, kind in params]
+
     def _test_entry(self, entry_type: type[ast_node_wrappers.BranchEntry], test: ast.expr) -> ast_node_wrappers.BranchEntry:
         """if t: / while t: the test is evaluated on entry, so the branch entry carries it."""
         span = dict(lineno=test.lineno, col_offset=test.col_offset,
@@ -246,8 +273,9 @@ class CFGGenerator():
 
                     cfg_nodes.append([func_entry])
 
+                    # the params are bound first thing in the body: a = ParameterOf(a), ...
                     func_body = ast_node_wrappers.FunctionBody(
-                        body=cur_node.body,
+                        body=self._parameters(cur_node.args) + cur_node.body,
                         lineno=cur_node.body[0].lineno,
                         col_offset=cur_node.body[0].col_offset,
                         end_lineno=cur_node.body[-1].end_lineno,
