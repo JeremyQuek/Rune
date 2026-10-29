@@ -30,6 +30,10 @@ class SCCNode():
 
 
 class CondensedGraph():
+    """
+    Takes an control flow graph and outputs a condensed DAG version of it
+    """
+
     def __init__(self, cfg: ControlFlowGraph) -> None:
         self.cfg = cfg
         self.sccs: list[SCCNode] = []

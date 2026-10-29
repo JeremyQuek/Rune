@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import ast_node_wrappers
-from cfg_generator import CFGGenerator
+from cfg_builder import CFGBuilder
 
 if TYPE_CHECKING:  # annotation only, so the CFG doesn't import the type layer at runtime
     from lexical_environment import Environment
@@ -32,11 +32,12 @@ class NodeType(Enum):
 # eq=False: nodes are dict keys (adj, indeg), so they hash by identity
 @dataclass(eq=False)
 class Node():
+    """
+    A control flow node stores a logical piece of source code
+    """
     node_type: NodeType
     ast_node: ast.AST | None = None
-    """
-    Incoming environment is keyed by predecessor to avoid stale copies from loop back edges.
-    """
+    # Incoming environment is keyed by predecessor to avoid stale copies from loop back edges.
     incoming_environments: dict["Node | None", "Environment"] = field(default_factory=dict)   # predecessor -> its env (None for a root), joined when visited
     enviroment: "Environment | None" = None
 
@@ -44,6 +45,10 @@ class Node():
         return self.node_type.name
 
 class ControlFlowGraph():
+    """
+    Takes an AST and transform it into a control flow graph
+    """
+
     mapping: dict[type[ast.AST], NodeType] = {
         ast.FunctionDef : NodeType.FUNCTION_DEFINITION,
         ast_node_wrappers.FunctionDefinitionEntry : NodeType.FUNCTION_DEFINITION,
@@ -100,8 +105,8 @@ class ControlFlowGraph():
         # first node of each function body -> its def, so the walk knows where to push the function's scope
         self.function_bodies: dict[Node, ast.FunctionDef | ast.AsyncFunctionDef] = {}
 
-        self.generator = CFGGenerator(tree, self)
-        self.generator.make_graph()
+        self.builder = CFGBuilder(tree, self)
+        self.builder.make_graph()
 
     def insert(self, parent: ast.AST | None, child: ast.AST) -> None:
         u = self.entry if parent is None else self._get_node(parent) 
@@ -202,7 +207,7 @@ def visualize_graph(cfg: ControlFlowGraph, source: str | None = None, name: str 
         return [start, end or start] if start and start > 0 else None
 
     source_lines = source.splitlines() if source is not None else None
-    real = {id(n) for n in ast.walk(cfg.generator.ast)}   # nodes of the parsed file, as opposed to the CFG's synthetic ones
+    real = {id(n) for n in ast.walk(cfg.builder.ast)}   # nodes of the parsed file, as opposed to the CFG's synthetic ones
 
     def synthetic(owner: ast.AST, stmt: ast.AST) -> str:
         """A statement the CFG made up (desugared), written the way it reads in the source."""

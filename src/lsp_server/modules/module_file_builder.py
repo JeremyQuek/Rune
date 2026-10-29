@@ -11,8 +11,12 @@ from control_flow_graph import ControlFlowGraph, Node
 from condensed_graph import CondensedGraph, SCCNode
 from ast_node_wrappers import CaughtAs, ClassDefinitionEntry, ElementOf, EnteredFrom, Exit, ExitKind, ForEntry, ParameterOf
 
-class ModuleAnalyzer():
-    MAX_PASSES = 10   # cap on fixed point passes per loop SCC; join keys settle in about two
+class ModuleFileBuilder():
+    """
+    Takes a condensed control flow graph and outputs a granular reference graph for each variable in a file, stored as a table. 
+    """
+
+    MAX_LOOP_PASSES = 10   
 
     def __init__(self, filepath: str) -> None:
         self.filepath = filepath
@@ -75,10 +79,10 @@ class ModuleAnalyzer():
     def _fixed_point_analysis(self, scc: SCCNode) -> None:
         """
         Visits the loop's nodes in forward order, pass after pass, until no node's environment
-        changes (or MAX_PASSES). Only the edges inside the loop deliver during the passes.
+        changes (or MAX_LOOP_PASSES). Only the edges inside the loop deliver during the passes.
         """
         previous = None
-        for _ in range(self.MAX_PASSES):
+        for _ in range(self.MAX_LOOP_PASSES):
             for u in scc.nodes:
                 self._visit_node(u, keep_incoming=u is scc.entry_node)
                 for v in scc.adj[u]:
@@ -699,7 +703,7 @@ class ModuleAnalyzer():
         return ".".join([root.id] + [part.attr for part in reversed(spine)])
 
 # Test function
-def visualize_file(analyzer: ModuleAnalyzer, path: str | None = None) -> str:
+def visualize_file(analyzer: ModuleFileBuilder, path: str | None = None) -> str:
     """
     Debug view of the provenance table: the source file with every entry boxed at its
     (col, line), and an arrow from each parent to its child. Entries with no position
@@ -772,7 +776,7 @@ def visualize_file(analyzer: ModuleAnalyzer, path: str | None = None) -> str:
     return str(out)
 
 if __name__=="__main__":
-    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/break_continue.py") 
-    module_analyzer.process_file()
+    module_file_builder = ModuleFileBuilder("/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/class.py") 
+    module_file_builder.process_file()
 
-    visualize_file(module_analyzer)
+    visualize_file(module_file_builder)

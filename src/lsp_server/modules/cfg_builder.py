@@ -44,7 +44,7 @@ class TryCatchContextManager():
 
 ScopeContextManager = IfElseContextManager | FunctionContextManager | ClassContextManager | LoopContextManager | TryCatchContextManager
 
-class CFGGenerator():
+class CFGBuilder():
     def __init__(self, ast: ast.AST, cfg: "ControlFlowGraph") -> None:
         self.cfg = cfg
         self.ast = ast

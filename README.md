@@ -84,7 +84,7 @@ The following is a WIP stack diagram of the objects that handle a single file's 
 <p align="center"><img src="assets/docs/uml_module.png" alt="UML Module Diagram" width="700" /></p>
 <p align="center"><em>Module dependency and API graph</em></p>
 
-The main controller, `ModuleAnalyzer`, oversees generation of the control flow graph via the `ASTWalker` class. It owns the graph traversal logic; a topological sort over the CFG; and calls `CodeBlockAnalyzer` on each graph node (a chunk of program text) to process and persist type information into a symbol table.
+The main controller, `ModuleFileBuilder`, oversees generation of the control flow graph via the `ASTWalker` class. It owns the graph traversal logic; a topological sort over the CFG; and calls `CodeBlockAnalyzer` on each graph node (a chunk of program text) to process and persist type information into a symbol table.
 
 ### Store and LEGB
 
