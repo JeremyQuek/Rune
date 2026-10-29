@@ -9,21 +9,21 @@
     --bg: #ffffff; --panel: #f6f7f9; --border: #d9dce1; --text: #1f2328; --muted: #6b7280;
     --grid: #eef0f3; --edge: #b8bec8; --node: #ffffff; --shadow: rgba(15, 23, 42, .08);
     --module: #475569; --branch: #d97706; --arm: #0d9488; --body: #2563eb; --def: #7c3aed; --exit: #9ca3af;
-    --in: #ea580c; --out: #0891b2; --hl: rgba(234, 88, 12, .12);
+    --in: #ea580c; --out: #0891b2; --hl: rgba(234, 88, 12, .12); --scc: #db2777;
 }
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
     --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
     --grid: #161a21; --edge: #4a5262; --node: #1b1f27; --shadow: rgba(0, 0, 0, .4);
     --module: #94a3b8; --branch: #fbbf24; --arm: #2dd4bf; --body: #60a5fa; --def: #a78bfa; --exit: #6b7280;
-    --in: #fb923c; --out: #22d3ee; --hl: rgba(251, 146, 60, .14);
+    --in: #fb923c; --out: #22d3ee; --hl: rgba(251, 146, 60, .14); --scc: #f472b6;
     }
 }
 :root[data-theme="dark"] {
     --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
     --grid: #161a21; --edge: #4a5262; --node: #1b1f27; --shadow: rgba(0, 0, 0, .4);
     --module: #94a3b8; --branch: #fbbf24; --arm: #2dd4bf; --body: #60a5fa; --def: #a78bfa; --exit: #6b7280;
-    --in: #fb923c; --out: #22d3ee; --hl: rgba(251, 146, 60, .14);
+    --in: #fb923c; --out: #22d3ee; --hl: rgba(251, 146, 60, .14); --scc: #f472b6;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -39,6 +39,8 @@ header h1 { font-size: 14px; margin: 0; font-weight: 600; }
 button { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
          padding: 3px 10px; font: inherit; cursor: pointer; }
 button:hover { border-color: var(--muted); }
+button:disabled { opacity: .4; cursor: not-allowed; border-color: var(--border); }
+button.on { border-color: var(--scc); color: var(--scc); }
 main { flex: 1; display: flex; min-height: 0; }
 #stage { flex: 1; position: relative; overflow: hidden; cursor: grab; min-width: 0;
          background-image: radial-gradient(var(--grid) 1.2px, transparent 1.2px); background-size: 22px 22px; }
@@ -51,6 +53,9 @@ svg { width: 100%; height: 100%; display: block; }
 .edge.hot { stroke-width: 2.4; }
 .hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: grab; }
 .node { cursor: pointer; }
+.group rect { fill: color-mix(in srgb, var(--scc) 12%, transparent); stroke: var(--scc); stroke-opacity: .5; stroke-width: 1.2; stroke-dasharray: 4 3; }
+.group text { fill: var(--scc); font: 600 11px -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer; }
+.group text:hover { text-decoration: underline; }
 .node rect.box { fill: var(--node); stroke: var(--c); stroke-width: 1.6; filter: drop-shadow(0 1px 2px var(--shadow)); }
 .node rect.bar { fill: var(--c); }
 .node text { fill: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -96,9 +101,11 @@ aside { width: 420px; border-left: 1px solid var(--border); background: var(--pa
     <span style="--c: var(--module)">module</span><span style="--c: var(--branch)">branch</span>
     <span style="--c: var(--arm)">arm</span><span style="--c: var(--body)">body</span>
     <span style="--c: var(--def)">def / class</span><span style="--c: var(--exit)">exit</span>
+    <span id="scc-legend" style="--c: var(--scc)">loop (SCC)</span>
     <span style="--c: var(--in)">into</span><span style="--c: var(--out)">out of</span>
 </div>
 <div class="tools">
+    <button id="sccmode" type="button">SCC graph</button>
     <button id="all" type="button"></button>
     <button id="fit" type="button">Fit</button>
     <button id="relayout" type="button">Re-layout</button>
@@ -113,7 +120,7 @@ aside { width: 420px; border-left: 1px solid var(--border); background: var(--pa
         <path d="M0,0 L10,5 L0,10 z" fill="var(--in)"></path></marker>
     <marker id="arrow-out" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
         <path d="M0,0 L10,5 L0,10 z" fill="var(--out)"></path></marker>
-</defs><g id="world"><g id="edges"></g><g id="nodes"></g></g></svg></div>
+</defs><g id="world"><g id="groups"></g><g id="edges"></g><g id="nodes"></g></g></svg></div>
 <aside>
     <div id="detail"></div>
     <div id="source"></div>
@@ -129,17 +136,73 @@ const svg = document.getElementById("svg"), world = document.getElementById("wor
 const edgeLayer = document.getElementById("edges"), nodeLayer = document.getElementById("nodes");
 const stage = document.getElementById("stage"), detail = document.getElementById("detail");
 const sourceBox = document.getElementById("source"), allButton = document.getElementById("all");
-const byId = new Map(data.nodes.map(n => [n.id, n]));
-const outs = new Map(data.nodes.map(n => [n.id, []])), ins = new Map(data.nodes.map(n => [n.id, []]));
-for (const [u, v] of data.edges) { outs.get(u).push(v); ins.get(v).push(u); }
+const groupLayer = document.getElementById("groups");
+
+// loop SCCs (condensed_graph.py): each starts collapsed into one node, which stands in for its nodes;
+// clicking it expands them in place, inside a dashed box whose label collapses it again
+const nodeById = new Map(data.nodes.map(n => [n.id, n]));
+const sccOf = new Map();
+const sccNodes = data.sccs.map((members, k) => {
+    members.forEach(id => sccOf.set(id, k));
+    const spans = members.map(id => nodeById.get(id).span).filter(Boolean);
+    return { id: "scc" + k, scc: k, members, kind: "scc", code: [],
+             label: `Loop SCC ${k + 1} · ${members.length} nodes`, type: `loop SCC: ${members.map(id => nodeById.get(id).label).join(", ")}`,
+             span: spans.length ? [Math.min(...spans.map(s => s[0])), Math.max(...spans.map(s => s[1]))] : null };
+});
+if (!sccNodes.length) document.getElementById("scc-legend").remove();
+const expanded = new Set();
+
+// pure SCC mode: one node per SCC of the CondensedGraph, edges read only from its adj, never
+// derived from the CFG, so the view shows exactly what the condenser built
+const rawNodes = (data.scc_graph ? data.scc_graph.sccs : []).map(c => {
+    const one = c.members.length === 1 ? nodeById.get(c.members[0]) : null;
+    const spans = c.members.map(id => nodeById.get(id).span).filter(Boolean);
+    return { id: "raw" + c.k, raw: c, code: [], kind: one ? one.kind : "scc",
+             label: one ? `SCC ${c.k} · ${one.label}` : `SCC ${c.k} · ${c.members.length} nodes`,
+             type: one ? "single node" : "loop",
+             span: spans.length ? [Math.min(...spans.map(s => s[0])), Math.max(...spans.map(s => s[1]))] : null };
+});
+let sccMode = false;
+const sccButton = document.getElementById("sccmode");
+if (!data.scc_graph) { sccButton.disabled = true; sccButton.title = "no SCC graph: open this view with visualize_condensed"; }
+sccButton.onclick = () => {
+    sccMode = !sccMode;
+    sccButton.classList.toggle("on", sccMode);
+    pinned = hovered = null;
+    offsets.clear(); bends.clear();
+    buildView(); render(); fit();
+};
+const byId = new Map([...data.nodes, ...sccNodes, ...rawNodes].map(n => [n.id, n]));
 
 // back edges (a loop's body going back to its head): found by a DFS from the roots, an edge into a
 // node still on the DFS stack. The layout runs on the rest, which is a DAG; back edges are drawn apart.
-const backEdges = new Set();
-{
+let shownGraph, outs, ins, backEdges, fwdOuts, fwdIns;
+const isBack = (u, v) => backEdges.has(u + ">" + v);
+function buildView() {
+    const shown = id => sccOf.has(id) && !expanded.has(sccOf.get(id)) ? "scc" + sccOf.get(id) : id;
+    if (sccMode) {
+        shownGraph = { nodes: rawNodes, edges: data.scc_graph.adj.map(([a, b]) => ["raw" + a, "raw" + b]) };
+        return finishView();
+    }
+    const nodes = [...data.nodes.filter(n => shown(n.id) === n.id), ...sccNodes.filter(c => !expanded.has(c.scc))];
+    const edges = [], seen = new Set();
+    for (const [u, v] of data.edges) {
+        const a = shown(u), b = shown(v);
+        if (a === b || seen.has(a + ">" + b)) continue;   // inside a collapsed SCC, or already drawn
+        seen.add(a + ">" + b); edges.push([a, b]);
+    }
+    shownGraph = { nodes, edges };
+    finishView();
+}
+function finishView() {
+    const { nodes, edges } = shownGraph;
+    outs = new Map(nodes.map(n => [n.id, []])); ins = new Map(nodes.map(n => [n.id, []]));
+    for (const [u, v] of edges) { outs.get(u).push(v); ins.get(v).push(u); }
+
+    backEdges = new Set();
     const state = new Map();   // id -> 1 on the stack, 2 done
-    const roots = data.nodes.filter(n => ins.get(n.id).length === 0).map(n => n.id);
-    for (const root of [...roots, ...data.nodes.map(n => n.id)]) {
+    const roots = nodes.filter(n => ins.get(n.id).length === 0).map(n => n.id);
+    for (const root of [...roots, ...nodes.map(n => n.id)]) {
         if (state.has(root)) continue;
         const stack = [[root, 0]];
         state.set(root, 1);
@@ -153,10 +216,15 @@ const backEdges = new Set();
             } else { state.set(u, 2); stack.pop(); }
         }
     }
+    fwdOuts = new Map(nodes.map(n => [n.id, outs.get(n.id).filter(v => !isBack(n.id, v))]));
+    fwdIns = new Map(nodes.map(n => [n.id, ins.get(n.id).filter(u => !isBack(u, n.id))]));
 }
-const isBack = (u, v) => backEdges.has(u + ">" + v);
-const fwdOuts = new Map(data.nodes.map(n => [n.id, outs.get(n.id).filter(v => !isBack(n.id, v))]));
-const fwdIns = new Map(data.nodes.map(n => [n.id, ins.get(n.id).filter(u => !isBack(u, n.id))]));
+buildView();
+function toggleScc(k) {
+    if (expanded.has(k)) expanded.delete(k); else expanded.add(k);
+    pinned = hovered = null;
+    buildView(); render();
+}
 document.getElementById("title").textContent =
     `${data.name} · ${data.nodes.length} nodes, ${data.edges.length} edges`;
 
@@ -180,7 +248,7 @@ themeButton.onclick = () => {
 // ---------- sizes: the header, plus the code block when the node is open ----------
 const measure = document.createElement("canvas").getContext("2d");
 const textWidth = (text, font) => { measure.font = font; return Math.ceil(measure.measureText(text).width); };
-for (const n of data.nodes) {
+for (const n of [...data.nodes, ...sccNodes, ...rawNodes]) {
     n.rows = n.code.slice(0, MAX_ROWS).map(([line, text, real]) =>
         ({ line, real, text: text.length > MAX_CHARS ? text.slice(0, MAX_CHARS - 1) + "…" : text }));
     if (n.code.length > MAX_ROWS) n.rows.push({ line: null, real: false, text: `… ${n.code.length - MAX_ROWS} more lines` });
@@ -193,9 +261,9 @@ const size = n => ({ w: Math.max(n.headW, n.open ? n.codeW : 0), h: NODE_H + (n.
 // ---------- layered layout ----------
 function layout() {
     // layers: longest path from the roots, over the forward edges (a DAG once back edges are set aside)
-    const indeg = new Map(data.nodes.map(n => [n.id, fwdIns.get(n.id).length]));
+    const indeg = new Map(shownGraph.nodes.map(n => [n.id, fwdIns.get(n.id).length]));
     const layer = new Map(), order = [];
-    const queue = data.nodes.filter(n => indeg.get(n.id) === 0).map(n => n.id);
+    const queue = shownGraph.nodes.filter(n => indeg.get(n.id) === 0).map(n => n.id);
     for (const id of queue) layer.set(id, 0);
     while (queue.length) {
         const u = queue.shift(); order.push(u);
@@ -205,13 +273,13 @@ function layout() {
             if (indeg.get(v) === 0) queue.push(v);
         }
     }
-    for (const n of data.nodes) if (!layer.has(n.id)) layer.set(n.id, 0);   // safety: cycles
+    for (const n of shownGraph.nodes) if (!layer.has(n.id)) layer.set(n.id, 0);   // safety: cycles
 
     // long edges get a dummy point per skipped layer, so they route between nodes
-    const items = new Map(data.nodes.map(n => [n.id, { id: n.id, layer: layer.get(n.id), ...size(n), real: true }]));
+    const items = new Map(shownGraph.nodes.map(n => [n.id, { id: n.id, layer: layer.get(n.id), ...size(n), real: true }]));
     const routes = [];   // per edge: the chain of item ids from u to v
     let dummy = 0;
-    for (const [u, v] of data.edges) {
+    for (const [u, v] of shownGraph.edges) {
         if (isBack(u, v)) { routes.push({ u, v, chain: [u, v], back: true }); continue; }
         const chain = [u];
         for (let l = layer.get(u) + 1; l < layer.get(v); l++) {
@@ -384,24 +452,43 @@ function render() {
         edgeLayer.append(path, hit); edgeEls.push({ r, path, hit });
         attachEdge(r, path, hit);
     }
-    for (const n of data.nodes) {
+    for (const n of shownGraph.nodes) {
         const g = drawNode(n);
         nodeLayer.appendChild(g); nodeEls.set(n.id, g);
         place(n.id);
         attachNode(n, g);
     }
     edgeEls.forEach(drawEdge);
-    allButton.textContent = data.nodes.some(n => n.open) ? "Hide all code" : "Show all code";
+    drawGroups();
+    allButton.textContent = shownGraph.nodes.some(n => n.open) ? "Hide all code" : "Show all code";
     paintFocus();
 }
 
+// an expanded SCC's nodes get a tinted halo each (a bounding box would also take in the
+// unrelated nodes the layout puts between them), and its entry carries the collapse label
+function drawGroups() {
+    groupLayer.textContent = "";
+    for (const k of sccMode ? [] : expanded) {
+        const g = el("g", { class: "group" }), pad = 6;
+        for (const id of data.sccs[k]) {
+            const b = box(id);
+            g.appendChild(el("rect", { x: b.x - b.w / 2 - pad, y: b.top - pad, width: b.w + pad * 2, height: b.h + pad * 2, rx: 13 }));
+        }
+        const entry = box(data.sccs[k][0]);   // nodes come in forward order: the first is the entry
+        const label = el("text", { x: entry.x - entry.w / 2 - pad + 4, y: entry.top - pad - 5 }, `Loop SCC ${k + 1} ▾ collapse`);
+        label.addEventListener("pointerdown", e => e.stopPropagation());
+        label.addEventListener("click", e => { e.stopPropagation(); toggleScc(k); });
+        g.appendChild(label);
+        groupLayer.appendChild(g);
+    }
+}
 function place(id) { const b = box(id); nodeEls.get(id).setAttribute("transform", `translate(${b.x - b.w / 2},${b.top})`); }
 function drawEdge({ r, path, hit }) { const d = edgePath(r); path.setAttribute("d", d); hit.setAttribute("d", d); }
 function redrawEdges(id) { for (const e of edgeEls) if (e.r.u === id || e.r.v === id) drawEdge(e); }
 function applyView() { world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`); }
 
 function fit() {
-    const bs = data.nodes.map(n => box(n.id));
+    const bs = shownGraph.nodes.map(n => box(n.id));
     const minX = Math.min(...bs.map(b => b.x - b.w / 2)), maxX = Math.max(...bs.map(b => b.x + b.w / 2));
     const minY = Math.min(...bs.map(b => b.top)), maxY = Math.max(...bs.map(b => b.top + b.h));
     const W = stage.clientWidth, H = stage.clientHeight, pad = 40;
@@ -429,10 +516,11 @@ function attachNode(n, g) {
         const dx = (e.clientX - start.px) / view.k, dy = (e.clientY - start.py) / view.k;
         if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
         offsets.set(n.id, { dx: start.dx + dx, dy: start.dy + dy });
-        place(n.id); redrawEdges(n.id);
+        place(n.id); redrawEdges(n.id); if (sccOf.has(n.id)) drawGroups();
     });
     g.addEventListener("pointerup", () => {
         g.classList.remove("dragging");
+        if (start && !moved && n.kind === "scc" && !n.raw) { start = null; toggleScc(n.scc); return; }
         if (start && !moved) { pinned = pinned === n.id ? null : n.id; paintFocus(); scrollToSpan(byId.get(pinned)); }
         start = null;
     });
@@ -486,14 +574,14 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { pinned = n
 document.getElementById("fit").onclick = fit;
 document.getElementById("relayout").onclick = () => { offsets.clear(); bends.clear(); render(); fit(); };
 allButton.onclick = () => {
-    const open = !data.nodes.some(n => n.open);
-    data.nodes.forEach(n => { n.open = open && n.rows.length > 0; });
+    const open = !shownGraph.nodes.some(n => n.open);
+    shownGraph.nodes.forEach(n => { n.open = open && n.rows.length > 0; });
     render();
 };
 
 function paintFocus() {
     const focus = hovered ?? pinned;
-    const lineNodes = lineFocus === null ? new Set() : new Set(data.nodes
+    const lineNodes = lineFocus === null ? new Set() : new Set(shownGraph.nodes
         .filter(n => n.span && n.span[0] <= lineFocus && lineFocus <= n.span[1]).map(n => n.id));
     svg.classList.toggle("dim", focus !== null || lineNodes.size > 0);
     for (const [id, g] of nodeEls) {
@@ -514,7 +602,7 @@ function paintFocus() {
 function showDetail(n) {
     if (!n) {
         detail.innerHTML = `<h2>Control flow graph</h2><div class="hint">Hover a node to see where it flows
-            (orange: into it, cyan: out of it). Click to pin, drag to move, ▸ shows its code. Drag an edge to bend it, double-click it to straighten.
+            (orange: into it, cyan: out of it). Click to pin, drag to move, ▸ shows its code. Drag an edge to bend it, double-click it to straighten. Click a loop SCC to expand it. SCC graph shows the condensed graph as built.
             Scroll to zoom, drag the background to pan. Hover a source line to find its nodes. Esc clears.</div>`;
         return;
     }
@@ -525,6 +613,12 @@ function showDetail(n) {
         <div class="meta">${esc(n.type)} · ${n.kind} · ${lines}<br>
         from: ${ins.get(n.id).map(name).join(", ") || "—"}<br>
         to: ${outs.get(n.id).map(name).join(", ") || "—"}</div>`;
+    if (n.raw) {
+        const cfgName = id => esc(nodeById.get(id).label);
+        detail.innerHTML += `<div class="meta">entry: ${cfgName(n.raw.entry)}<br>
+            visit order: ${n.raw.members.map(cfgName).join(" → ")}<br>
+            out edges: ${n.raw.out_edges.map(([u, v]) => `${cfgName(u)} → ${cfgName(v)}`).join(", ") || "—"}</div>`;
+    }
 }
 
 // ---------- source panel ----------

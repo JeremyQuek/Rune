@@ -156,12 +156,15 @@ class ControlFlowGraph():
 
 # Test function
 def visualize_graph(cfg: ControlFlowGraph, source: str | None = None, name: str = "graph",
-                 path: str | None = None) -> str:
+                 path: str | None = None, sccs: list[list[int]] | None = None,
+                 scc_graph: dict | None = None) -> str:
     """
     Debug view of the CFG: the _pretty_print edges laid out as a layered graph (top to bottom,
     crossings reduced), with draggable nodes, pan and zoom. If source is given, the file is shown
     at the side: hovering a node highlights its lines, hovering a line highlights its nodes.
     Writes the page to `path` (default: the temp dir), opens it and returns its path.
+    sccs (node ids per loop SCC, see condensed_graph.py) starts each loop collapsed into one node.
+    scc_graph (the CondensedGraph's own SCCs and adj) enables the pure SCC graph toggle.
     """
     import html, json, pathlib, tempfile, webbrowser
 
@@ -259,7 +262,7 @@ def visualize_graph(cfg: ControlFlowGraph, source: str | None = None, name: str 
         "code": code(n),
     } for n in used]
     edges = [[cfg._node_ids[id(u)], cfg._node_ids[id(v)]] for u, v in cfg.edges]
-    data = {"name": name, "nodes": nodes, "edges": edges, "source": source_lines}
+    data = {"name": name, "nodes": nodes, "edges": edges, "source": source_lines, "sccs": sccs or [], "scc_graph": scc_graph}
 
     # the page lives in tests/unit_test_html_templates; only the placeholders are filled in here
     template = (pathlib.Path(__file__).resolve().parents[3] / "tests" / "unit_test_html_templates"
