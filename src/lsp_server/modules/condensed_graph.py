@@ -35,7 +35,6 @@ class CondensedGraph():
         self.sccs: list[SCCNode] = []
         self.scc_of: dict[Node, SCCNode] = {}
         self.adj: dict[SCCNode, list[SCCNode]] = defaultdict(list)    # edges between SCCs: a DAG
-        self.indeg: dict[SCCNode, int] = defaultdict(int)
 
         succ: dict[Node, list[Node]] = defaultdict(list)
         nodes = list(dict.fromkeys(n for edge in cfg.edges for n in edge))   # every connected node, in insertion order
@@ -47,11 +46,15 @@ class CondensedGraph():
 
         # edges between SCCs, once per pair
         for scc in self.sccs:
-            targets = list(dict.fromkeys(self.scc_of[v] for _, v in scc.out_edges))
-            self.adj[scc] = targets
-            self.indeg[scc] += 0   # touch, so roots have indeg 0
+            self.adj[scc] = list(dict.fromkeys(self.scc_of[v] for _, v in scc.out_edges))
+
+    def count_indeg(self) -> dict[SCCNode, int]:
+        """A fresh count per call, since Kahn's algorithm consumes it."""
+        indeg = {scc: 0 for scc in self.sccs}   # roots have indeg 0
+        for targets in self.adj.values():
             for target in targets:
-                self.indeg[target] += 1
+                indeg[target] += 1
+        return indeg
 
     def _run_tarjan(self, nodes: list[Node], succ: dict[Node, list[Node]]) -> list[list[Node]]:
         """

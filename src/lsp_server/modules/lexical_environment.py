@@ -95,6 +95,17 @@ class Environment():
                       for scope in self.scopes]
         return env
 
+    def snapshot(self) -> int:
+        """
+        A hash of every binding, scope by scope, to tell whether a fixed point pass changed anything.
+        Names and keys only: scope ids are left out, since push_scope makes a new one on every pass.
+        """
+        return hash(tuple(frozenset((name, entry.key) for name, entry in scope.table.items())
+                          for scope in self.scopes))
+
+    def snapshot_debug(self) -> tuple[dict[str, Key], ...]:
+        """The bindings snapshot() hashes, readable: for finding what keeps a loop from converging."""
+        return tuple({name: entry.key for name, entry in scope.table.items()} for scope in self.scopes)
 
     def _scope_of(self, x: str) -> Scope | None:
         """

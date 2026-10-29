@@ -8,9 +8,12 @@ from type_lattice import LatticeValue
 from lexical_environment import Environment, Key, join
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from control_flow_graph import ControlFlowGraph, Node
+from condensed_graph import CondensedGraph, SCCNode
 from ast_node_wrappers import CaughtAs, ClassDefinitionEntry, ElementOf, EnteredFrom, Exit, ExitKind, ForEntry, ParameterOf
 
 class ModuleAnalyzer():
+    MAX_PASSES = 10   # cap on fixed point passes per loop SCC; join keys settle in about two
+
     def __init__(self, filepath: str) -> None:
         self.filepath = filepath
         self.env: Environment | None = None   # built in process_file, once the source is read
@@ -41,48 +44,83 @@ class ModuleAnalyzer():
 
     def _traverse_graph(self):
         """
-        Topological Traversal using Kahn's Algorithm
+        Topological Traversal using Kahn's Algorithm, over the condensed graph: a plain node is
+        visited once, a loop SCC is run to a fixed point. Either way its out edges deliver once it is done.
         """
 
-        adj = self.cfg.create_adjacency_list()
-        indeg = self.cfg.count_indeg()
+        cg = CondensedGraph(self.cfg)
+        self.adj = self.cfg.create_adjacency_list()
+        indeg = cg.count_indeg()
 
-        q = deque([u for u in adj if indeg[u]==0])
-        for u in q:
-            u.incoming_environments.append(self.env)   # the roots start from the module's environment
-        
+        q = deque([scc for scc in cg.sccs if indeg[scc]==0])
+        for scc in q:
+            scc.entry_node.incoming_environments[None] = self.env   # the roots start from the module's environment
+
         while q:
-            u = q.popleft()
+            scc = q.popleft()
+            if scc.is_loop():
+                self._fixed_point_analysis(scc)
+            else:
+                self._visit_node(scc.entry_node)
 
-            # Get the ID of the node
-            node_id = self.cfg._node_ids[id(u)]
-
-            # Combine incoming envs such as on join branches
-            u.enviroment = join(u.incoming_environments, lambda x, keys: self._join_entry(node_id, x, keys))
-            u.incoming_environments = []
-            self.env = u.enviroment
-
-            if isinstance(u.ast_node, Exit) and u.ast_node.kind == ExitKind.CLASS_DEFINITION:
-                self.env.pop_scope()   # leaving the class body
-            if u in self.cfg.function_bodies:
-                defn = self.cfg.function_bodies[u]   # entering a function body: its env is the def's clone, no pop needed
-                self.env.push_scope(defn.name, defn.lineno)
-
-            self._analyze_code_block(u)
-
-            if isinstance(u.ast_node, ClassDefinitionEntry):
-                defn = u.ast_node.body[0].value   # the class name is bound in the enclosing scope, then the body runs in its own
-                self.env.push_scope(defn.name, defn.lineno)
-
-            children = adj[u]
-            for v in children:
-                # Share a ref of the env to a single child else clone the env to all children
-                v.incoming_environments.append(u.enviroment if len(children) == 1 else u.enviroment.clone())
-                indeg[v]-=1
-                if indeg[v]==0:
-                    q.append(v)
+            for u, v in scc.out_edges:
+                self._deliver(u, v)
+            for target in cg.adj[scc]:
+                indeg[target]-=1
+                if indeg[target]==0:
+                    q.append(target)
         return
-    
+
+    def _fixed_point_analysis(self, scc: SCCNode) -> None:
+        """
+        Visits the loop's nodes in forward order, pass after pass, until no node's environment
+        changes (or MAX_PASSES). Only the edges inside the loop deliver during the passes.
+        """
+        previous = None
+        for _ in range(self.MAX_PASSES):
+            for u in scc.nodes:
+                self._visit_node(u, keep_incoming=u is scc.entry_node)
+                for v in scc.adj[u]:
+                    self._deliver(u, v)
+            snapshot = {u: u.enviroment.snapshot() for u in scc.nodes}
+            if snapshot == previous:
+                return
+            previous = snapshot
+
+    def _visit_node(self, u: Node, keep_incoming: bool = False) -> None:
+        """
+        One node: join what its predecessors delivered, then build its block's entries.
+        keep_incoming (a loop's entry): the outside arm is delivered once and must stay as it was for
+        every pass, so if the join handed back a delivered env as is, the node works on a clone of it.
+        """
+        # Get the ID of the node
+        node_id = self.cfg._node_ids[id(u)]
+
+        #  We do not clear the previous environment on join inside loops. This is because of loop carried dependency behaviour:
+        #  Any read inside the loop of a name the loop also writes should be see either the pre-loop value or the value from the previous iteration.
+        # Combine incoming envs such as on join branches
+        incoming = list(u.incoming_environments.values())
+        u.enviroment = join(incoming, lambda x, keys: self._join_entry(node_id, x, keys))
+        if keep_incoming and any(u.enviroment is env for env in incoming):
+            u.enviroment = u.enviroment.clone()
+        self.env = u.enviroment
+
+        if isinstance(u.ast_node, Exit) and u.ast_node.kind == ExitKind.CLASS_DEFINITION:
+            self.env.pop_scope()   # leaving the class body
+        if u in self.cfg.function_bodies:
+            defn = self.cfg.function_bodies[u]   # entering a function body: its env is the def's clone, no pop needed
+            self.env.push_scope(defn.name, defn.lineno)
+
+        self._analyze_code_block(u)
+
+        if isinstance(u.ast_node, ClassDefinitionEntry):
+            defn = u.ast_node.body[0].value   # the class name is bound in the enclosing scope, then the body runs in its own
+            self.env.push_scope(defn.name, defn.lineno)
+
+    def _deliver(self, u: Node, v: Node) -> None:
+        # Share a ref of the env to a single child else clone the env to all children
+        v.incoming_environments[u] = u.enviroment if len(self.adj[u]) == 1 else u.enviroment.clone()
+
     def _analyze_code_block(self, node: Node) -> None:
         for stmt in getattr(node.ast_node, "body", None) or []:
             self._parse_expr(stmt, iterates=isinstance(node.ast_node, ForEntry))

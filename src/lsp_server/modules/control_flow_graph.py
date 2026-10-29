@@ -34,7 +34,10 @@ class NodeType(Enum):
 class Node():
     node_type: NodeType
     ast_node: ast.AST | None = None
-    incoming_environments: list["Environment"] = field(default_factory=list)   # pushed by the parents, joined when popped
+    """
+    Incoming environment is keyed by predecessor to avoid stale copies from loop back edges.
+    """
+    incoming_environments: dict["Node | None", "Environment"] = field(default_factory=dict)   # predecessor -> its env (None for a root), joined when visited
     enviroment: "Environment | None" = None
 
     def __repr__(self) -> str:
@@ -89,7 +92,6 @@ class ControlFlowGraph():
         self.nodes: dict[ast.AST | Node, Node] = {self.entry: self.entry}   # ast node -> its CFG node
         self.edges: list[list[Node]] = []
         self.adj: defaultdict[Node, list[Node]] = defaultdict(list)
-        self.indeg: defaultdict[Node, int] = defaultdict(int)
 
         # For pretty print
         self._id_counter = 0
@@ -111,12 +113,6 @@ class ControlFlowGraph():
             self.adj[u].append(v)
         
         return self.adj
-    
-    def count_indeg(self) -> defaultdict[Node, int]:
-        for (u,v) in self.edges:
-            self.indeg[v]+=1
-            self.indeg[u]+=0 #Touch u
-        return self.indeg
 
     def _get_node(self, ast_node: ast.AST) -> Node:
         if ast_node not in self.nodes:
