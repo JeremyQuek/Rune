@@ -3,10 +3,10 @@ import os
 import sys
 from io import StringIO
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "lsp_server", "modules"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "src", "lsp_server", "modules"))
 from control_flow_graph import ControlFlowGraph
 
-TESTS_DIR = os.path.join(os.path.dirname(__file__), "cfg_graph_test_cases")
+TESTS_DIR = os.path.join(os.path.dirname(__file__), "testcases")
 
 def get_test_cases():
     cases = []
