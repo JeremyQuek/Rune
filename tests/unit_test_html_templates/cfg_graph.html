@@ -48,6 +48,8 @@ svg { width: 100%; height: 100%; display: block; }
 .edge.in { stroke: var(--in); stroke-width: 2.4; }
 .edge.out { stroke: var(--out); stroke-width: 2.4; }
 .edge.back { stroke-dasharray: 5 4; }
+.edge.hot { stroke-width: 2.4; }
+.hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: grab; }
 .node { cursor: pointer; }
 .node rect.box { fill: var(--node); stroke: var(--c); stroke-width: 1.6; filter: drop-shadow(0 1px 2px var(--shadow)); }
 .node rect.bar { fill: var(--c); }
@@ -105,11 +107,11 @@ aside { width: 420px; border-left: 1px solid var(--border); background: var(--pa
 </header>
 <main>
 <div id="stage"><svg id="svg"><defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <marker id="arrow" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
         <path d="M0,0 L10,5 L0,10 z" fill="var(--edge)"></path></marker>
-    <marker id="arrow-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <marker id="arrow-in" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
         <path d="M0,0 L10,5 L0,10 z" fill="var(--in)"></path></marker>
-    <marker id="arrow-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <marker id="arrow-out" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
         <path d="M0,0 L10,5 L0,10 z" fill="var(--out)"></path></marker>
 </defs><g id="world"><g id="edges"></g><g id="nodes"></g></g></svg></div>
 <aside>
@@ -122,6 +124,7 @@ aside { width: 420px; border-left: 1px solid var(--border); background: var(--pa
 const data = JSON.parse(document.getElementById("data").textContent);
 const NS = "http://www.w3.org/2000/svg";
 const NODE_H = 42, ROW_H = 16, CODE_PAD = 8, MAX_ROWS = 16, MAX_CHARS = 64, LAYER_GAP = 74, NODE_GAP = 28;
+const ARROW = 9;   // arrowhead length in px, kept in sync with the markers' markerWidth
 const svg = document.getElementById("svg"), world = document.getElementById("world");
 const edgeLayer = document.getElementById("edges"), nodeLayer = document.getElementById("nodes");
 const stage = document.getElementById("stage"), detail = document.getElementById("detail");
@@ -293,6 +296,7 @@ function layout() {
 // ---------- rendering ----------
 let model, view = { x: 40, y: 30, k: 1 };
 const offsets = new Map();   // node id -> {dx, dy} from dragging, kept when code is toggled
+const bends = new Map();     // edge "u>v" -> {dx, dy}: where its middle was dragged to, relative to the default middle
 const nodeEls = new Map(), edgeEls = [];
 const box = id => {
     const it = model.items.get(id), o = offsets.get(id) || { dx: 0, dy: 0 };
@@ -305,28 +309,41 @@ const el = (tag, attrs, text) => {
     return e;
 };
 
+const edgeKey = r => r.u + ">" + r.v;
+
+// a cubic from p0 to p1 through m: leaves p0 along d0, arrives at p1 along d1,
+// and passes m heading from p0 towards p1, so the dragged point sits on one smooth line
+function through(p0, d0, m, p1, d1) {
+    const dist = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1]);
+    const t = [(p1[0] - p0[0]) / 4, (p1[1] - p0[1]) / 4], l0 = dist(p0, m) / 2, l1 = dist(m, p1) / 2;
+    return `M${p0[0]},${p0[1]} C${p0[0] + d0[0] * l0},${p0[1] + d0[1] * l0} ${m[0] - t[0]},${m[1] - t[1]} ${m[0]},${m[1]}` +
+           ` C${m[0] + t[0]},${m[1] + t[1]} ${p1[0] - d1[0] * l1},${p1[1] - d1[1] * l1} ${p1[0]},${p1[1]}`;
+}
+
 function edgePath(r) {
-    const a = box(r.u), b = box(r.v);
+    const a = box(r.u), b = box(r.v), bend = bends.get(edgeKey(r));
     if (r.back) {
         // out of u's right side, up around the right, into the head's right side
         const ax = a.x + a.w / 2, ay = a.top + Math.min(a.h, NODE_H) / 2;
-        const bx = b.x + b.w / 2 + 2, by = b.top + NODE_H / 2;
+        const bx = b.x + b.w / 2 + 2 + ARROW, by = b.top + NODE_H / 2;   // the line stops at the arrowhead's back
         // clear every node in the layers the loop spans, so the arc never crosses one
         const lo = model.items.get(r.v).layer, hi = model.items.get(r.u).layer;
         let right = Math.max(ax, bx);
         for (const it of model.items.values())
             if (it.real && it.layer >= lo && it.layer <= hi) { const p = box(it.id); right = Math.max(right, p.x + p.w / 2); }
         const out = right + 36 + 14 * (r.nest || 0);
+        if (bend) return through([ax, ay], [1, 0], [(ax + 6 * out + bx) / 8 + bend.dx, (ay + by) / 2 + bend.dy], [bx, by], [-1, 0]);
         return `M${ax},${ay} C${out},${ay} ${out},${by} ${bx},${by}`;
     }
-    const points = [[a.x, a.top + a.h], ...r.chain.slice(1, -1).map(id => { const p = box(id); return [p.x, p.top]; }),
-                    [b.x, b.top - 2]];
-    let d = `M${points[0][0]},${points[0][1]}`;
-    for (let i = 1; i < points.length; i++) {
-        const [x0, y0] = points[i - 1], [x1, y1] = points[i], my = (y0 + y1) / 2;
-        d += ` C${x0},${my} ${x1},${my} ${x1},${y1}`;
-    }
-    return d;
+    // one curve straight from u to v, like any other edge: the dummies only steer the layout,
+    // so a long edge stays a single link and follows its ends when they're dragged
+    const [x0, y0] = [a.x, a.top + a.h], [x1, y1] = [b.x, b.top - 2 - ARROW];   // the line stops at the arrowhead's back, its tip touches the node
+    const my = (y0 + y1) / 2;
+    if (bend) return through([x0, y0], [0, 1], [(x0 + x1) / 2 + bend.dx, my + bend.dy], [x1, y1], [0, 1]);
+    // handles always point down out of u and down into v, so the arrow keeps entering v's top
+    // even when v is dragged above u (handles at my would flip it)
+    const k = Math.max(Math.abs(y1 - y0) / 2, 40);
+    return `M${x0},${y0} C${x0},${y0 + k} ${x1},${y1 - k} ${x1},${y1}`;
 }
 
 function drawNode(n) {
@@ -363,7 +380,9 @@ function render() {
     edgeLayer.textContent = ""; nodeLayer.textContent = ""; nodeEls.clear(); edgeEls.length = 0;
     for (const r of model.routes) {
         const path = el("path", { class: r.back ? "edge back" : "edge", "marker-end": "url(#arrow)" });
-        edgeLayer.appendChild(path); edgeEls.push({ r, path });
+        const hit = el("path", { class: "hit" });   // a wide invisible twin, so the thin line is easy to grab
+        edgeLayer.append(path, hit); edgeEls.push({ r, path, hit });
+        attachEdge(r, path, hit);
     }
     for (const n of data.nodes) {
         const g = drawNode(n);
@@ -371,13 +390,14 @@ function render() {
         place(n.id);
         attachNode(n, g);
     }
-    edgeEls.forEach(({ r, path }) => path.setAttribute("d", edgePath(r)));
+    edgeEls.forEach(drawEdge);
     allButton.textContent = data.nodes.some(n => n.open) ? "Hide all code" : "Show all code";
     paintFocus();
 }
 
 function place(id) { const b = box(id); nodeEls.get(id).setAttribute("transform", `translate(${b.x - b.w / 2},${b.top})`); }
-function redrawEdges(id) { for (const { r, path } of edgeEls) if (r.u === id || r.v === id) path.setAttribute("d", edgePath(r)); }
+function drawEdge({ r, path, hit }) { const d = edgePath(r); path.setAttribute("d", d); hit.setAttribute("d", d); }
+function redrawEdges(id) { for (const e of edgeEls) if (e.r.u === id || e.r.v === id) drawEdge(e); }
 function applyView() { world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`); }
 
 function fit() {
@@ -420,6 +440,26 @@ function attachNode(n, g) {
     g.addEventListener("pointerleave", () => { hovered = null; paintFocus(); });
 }
 
+// drag an edge by its middle; double-click puts it back. The bend is kept relative to the
+// edge's ends, so dragging a node carries its edges along
+function attachEdge(r, path, hit) {
+    let start = null;
+    hit.addEventListener("pointerdown", e => {
+        e.stopPropagation(); hit.setPointerCapture(e.pointerId);
+        const o = bends.get(edgeKey(r)) || { dx: 0, dy: 0 };
+        start = { px: e.clientX, py: e.clientY, dx: o.dx, dy: o.dy };
+    });
+    hit.addEventListener("pointermove", e => {
+        if (!start) return;
+        bends.set(edgeKey(r), { dx: start.dx + (e.clientX - start.px) / view.k, dy: start.dy + (e.clientY - start.py) / view.k });
+        drawEdge({ r, path, hit });
+    });
+    hit.addEventListener("pointerup", () => { start = null; });
+    hit.addEventListener("dblclick", e => { e.stopPropagation(); bends.delete(edgeKey(r)); drawEdge({ r, path, hit }); });
+    hit.addEventListener("pointerenter", () => path.classList.add("hot"));
+    hit.addEventListener("pointerleave", () => path.classList.remove("hot"));
+}
+
 let pan = null;
 stage.addEventListener("pointerdown", e => {
     pan = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, moved: false };
@@ -444,7 +484,7 @@ stage.addEventListener("wheel", e => {
 }, { passive: false });
 document.addEventListener("keydown", e => { if (e.key === "Escape") { pinned = null; lineFocus = null; paintFocus(); } });
 document.getElementById("fit").onclick = fit;
-document.getElementById("relayout").onclick = () => { offsets.clear(); render(); fit(); };
+document.getElementById("relayout").onclick = () => { offsets.clear(); bends.clear(); render(); fit(); };
 allButton.onclick = () => {
     const open = !data.nodes.some(n => n.open);
     data.nodes.forEach(n => { n.open = open && n.rows.length > 0; });
@@ -474,7 +514,7 @@ function paintFocus() {
 function showDetail(n) {
     if (!n) {
         detail.innerHTML = `<h2>Control flow graph</h2><div class="hint">Hover a node to see where it flows
-            (orange: into it, cyan: out of it). Click to pin, drag to move, ▸ shows its code.
+            (orange: into it, cyan: out of it). Click to pin, drag to move, ▸ shows its code. Drag an edge to bend it, double-click it to straighten.
             Scroll to zoom, drag the background to pan. Hover a source line to find its nodes. Esc clears.</div>`;
         return;
     }

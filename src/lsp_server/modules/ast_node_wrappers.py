@@ -70,7 +70,6 @@ class ExitKind(Enum):
     FOR_LOOP = auto()
     WHILE = auto()
     WHILE_LOOP = auto()
-    LOOP_NEVER_RAN = auto()
     TRY = auto()
     EXCEPT = auto()
     TRY_EXCEPT_BRANCH = auto()

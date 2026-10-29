@@ -428,22 +428,22 @@ class CFGGenerator():
 
                     # zero-iteration arm, no body to descend into
                     never_ran_entry = ast_node_wrappers.LoopNeverRanEntry()
-                    never_ran_exit = ast_node_wrappers.Exit(kind=ast_node_wrappers.ExitKind.LOOP_NEVER_RAN)
-                    self.cfg.insert(never_ran_entry, never_ran_exit)
+                    loop_exit = ast_node_wrappers.Exit(kind=ast_node_wrappers.ExitKind.WHILE_LOOP)
+                    self.cfg.insert(never_ran_entry, loop_exit)
 
                     # the end of the body either goes round again (back edge) or leaves,
                     # merging with the never-ran arm
                     for tail_node in while_tail:
                         self.cfg.insert(tail_node, while_entry)
-                        self.cfg.insert(tail_node, never_ran_exit)
+                        self.cfg.insert(tail_node, loop_exit)
 
                     # a literal else runs once after the loop, so it hangs after the merge
                     if cur_node.orelse:
                         else_entry = ast_node_wrappers.ElseEntry()
                         tail = self._dfs(self._create_body(cur_node.orelse, ast_node_wrappers.ElseBody), parent=else_entry)
-                        self.cfg.insert(never_ran_exit, else_entry)
+                        self.cfg.insert(loop_exit, else_entry)
                     else:
-                        tail = [never_ran_exit]
+                        tail = [loop_exit]
 
                     cfg_nodes.append([while_entry, never_ran_entry])
                     cfg_nodes.append(tail)
@@ -497,22 +497,22 @@ class CFGGenerator():
 
                     # zero-iteration arm, no body to descend into
                     never_ran_entry = ast_node_wrappers.LoopNeverRanEntry()
-                    never_ran_exit = ast_node_wrappers.Exit(kind=ast_node_wrappers.ExitKind.LOOP_NEVER_RAN)
-                    self.cfg.insert(never_ran_entry, never_ran_exit)
+                    loop_exit = ast_node_wrappers.Exit(kind=ast_node_wrappers.ExitKind.FOR_LOOP)
+                    self.cfg.insert(never_ran_entry, loop_exit)
 
                     # the end of the body either goes round again (back edge) or leaves,
                     # merging with the never-ran arm
                     for tail_node in for_tail:
                         self.cfg.insert(tail_node, for_entry)
-                        self.cfg.insert(tail_node, never_ran_exit)
+                        self.cfg.insert(tail_node, loop_exit)
 
                     # a literal else runs once after the loop, so it hangs after the merge
                     if cur_node.orelse:
                         else_entry = ast_node_wrappers.ElseEntry()
                         tail = self._dfs(self._create_body(cur_node.orelse, ast_node_wrappers.ElseBody), parent=else_entry)
-                        self.cfg.insert(never_ran_exit, else_entry)
+                        self.cfg.insert(loop_exit, else_entry)
                     else:
-                        tail = [never_ran_exit]
+                        tail = [loop_exit]
 
                     cfg_nodes.append([for_entry, never_ran_entry])
                     cfg_nodes.append(tail)
