@@ -261,7 +261,7 @@ class ModuleAnalyzer():
         │ several children (branch) │ each child gets a clone of the env (one child: the same env)                           │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ several parents (merge)   │ the parents' envs are joined: a name whose keys differ gets                            │
-        │                           │ one JOIN entry ("join", node_id, x); unbound in an arm → ("unbound", node_id, x)       │
+        │                           │ one JOIN entry ("join", node_id, x); unbound in an arm → ("unbound", x)                │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ if / elif / while t:      │ the branch entry carries t: reads of t                                                 │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
@@ -474,38 +474,28 @@ class ModuleAnalyzer():
 
     def _join_entry(self, node_id: int, symbol: str, keys: list[Key | None]) -> Key:
         """
-        The JOIN entry for symbol at merge node node_id; None (unbound in an arm) → ("unbound", node_id, symbol).
-        Join reuse: if one arm's key already comes down to every leaf the other arms bring, the merge adds
-        no new information, so that key is returned and no new entry is made.
+        The JOIN entry for symbol at merge node node_id; None (unbound in an arm) → ("unbound", symbol),
+        one per name. Join reuse: if one arm's key already comes down to every leaf the other arms bring,
+        the merge adds no new information, so that key is returned and no new entry is made.
         """
-        arms = [self._leaves(key, symbol) for key in keys]
-        merged = frozenset().union(*arms)
-        for key, leaves in zip(keys, arms):
-            if key is not None and leaves == merged:
+        parents = [("unbound", symbol) if key is None else key for key in keys]
+        arms = [self._leaves(key) for key in parents]
+        for key, leaves in zip(parents, arms):
+            if leaves == frozenset().union(*arms):
                 return key
 
-        parents = []
-        for key in keys:
-            if key is None:   # known without resolving: the name has no value on that arm
-                key = ("unbound", node_id, symbol)
-                self.provenance_table[key] = TableEntry(symbol, None, type=LatticeValue.of(UNBOUND), resolved=True,
-                                                        origin=Origin.UNBOUND)
-            parents.append(key)
+        if ("unbound", symbol) in parents:   # known without resolving: the name has no value on that arm
+            self.provenance_table.setdefault(("unbound", symbol), TableEntry(symbol, None, type=LatticeValue.of(UNBOUND),
+                                                                             resolved=True, origin=Origin.UNBOUND))
         key = ("join", node_id, symbol)
         self.provenance_table[key] = TableEntry(symbol, None, parents=parents, origin=Origin.JOIN)
         return key
 
-    def _leaves(self, key: Key | None, symbol: str) -> frozenset[Key]:
-        """
-        The non-join keys key comes down to, walking through joins (seen breaks the loop cycles).
-        Unbound leaves compare by name only, since each merge node makes its own placeholder.
-        """
+    def _leaves(self, key: Key) -> frozenset[Key]:
+        """The non-join keys key comes down to, walking through joins (seen breaks the loop cycles)."""
         seen, stack, leaves = set(), [key], set()
         while stack:
-            key = stack.pop()
-            if key is None or key[0] == "unbound":
-                leaves.add(("unbound", symbol))
-            elif key not in seen:
+            if (key := stack.pop()) not in seen:
                 seen.add(key)
                 entry = self.provenance_table.get(key)
                 if entry is not None and entry.origin == Origin.JOIN:
