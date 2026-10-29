@@ -35,7 +35,6 @@ class Node():
     ast_node: ast.AST | None = None
     incoming_environments: list["Environment"] = field(default_factory=list)   # pushed by the parents, joined when popped
     enviroment: "Environment | None" = None
-    next: list["Node"] = field(default_factory=list)
 
     def __repr__(self) -> str:
         return self.node_type.name
@@ -57,6 +56,7 @@ class ControlFlowGraph():
         ast_node_wrappers.ModuleBody: NodeType.MODULE_BODY,
         ast_node_wrappers.IfEntry: NodeType.IF_BODY,
         ast_node_wrappers.ElseEntry: NodeType.ELSE_BODY,
+        ast_node_wrappers.LoopNeverRanEntry: NodeType.ELSE_BODY,
         ast_node_wrappers.ForEntry: NodeType.FOR_BODY,
         ast_node_wrappers.WhileEntry: NodeType.WHILE_BODY,
         ast_node_wrappers.TryEntry: NodeType.TRY_BODY,
@@ -97,7 +97,6 @@ class ControlFlowGraph():
     def insert(self, parent: ast.AST | None, child: ast.AST) -> None:
         u = self.entry if parent is None else self._get_node(parent) 
         v = self._get_node(child)
-        u.next.append(v)
         self.edges.append([u,v])
     
     def create_adjacency_list(self) -> defaultdict[Node, list[Node]]:
@@ -266,7 +265,7 @@ def visualize_graph(cfg: ControlFlowGraph, source: str | None = None, name: str 
 
 
 if __name__ == "__main__":
-    path = "tests/cfg_graph_test_cases/class.py"
+    path = "/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/for_loop.py"
     with open(path, "r", encoding="utf-8") as f:
         source = f.read()
 

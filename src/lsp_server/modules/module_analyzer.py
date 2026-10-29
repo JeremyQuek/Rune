@@ -36,11 +36,14 @@ class ModuleAnalyzer():
                                                                     parents=[builtins_module])
 
         self.cfg = ControlFlowGraph(module_ast)
-        self.cfg._pretty_print()
+        # self.cfg._pretty_print()
         self._traverse_graph()
 
     def _traverse_graph(self):
-        # Topologically traverse the graph
+        """
+        Topological Traversal using Kahn's Algorithm
+        """
+
         adj = self.cfg.create_adjacency_list()
         indeg = self.cfg.count_indeg()
 
@@ -669,7 +672,7 @@ def visualize_file(analyzer: ModuleAnalyzer, path: str | None = None) -> str:
     return str(out)
 
 if __name__=="__main__":
-    module_analyzer = ModuleAnalyzer("src/lsp_server/modules/simple_file_analyzer.py") 
+    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/for_loop.py") 
     module_analyzer.process_file()
 
     visualize_file(module_analyzer)

@@ -27,7 +27,7 @@ server = LanguageServer("rune", "0.1.0")
 file_dict = {}  # file uri -> {(col, line): TableEntry}
 TRACE_PREVIEW_LENGTH = 3  # trace steps shown directly in the hover
 FAKE_CROSS_FILE = True    # TEMP: graft a chain from tests/random_source.py onto every graph (preview cross-file UI before imports exist)
-FAKE_FILE = (Path(__file__).parents[2] / "tests" / "random_source.py").as_uri()
+FAKE_FILE = (Path(__file__).parents[2] / "tests" / "integration/random_source.py").as_uri()
 
 
 def create_type_table(uri: str, source: str):

@@ -47,6 +47,7 @@ svg { width: 100%; height: 100%; display: block; }
 .edge { fill: none; stroke: var(--edge); stroke-width: 1.5; }
 .edge.in { stroke: var(--in); stroke-width: 2.4; }
 .edge.out { stroke: var(--out); stroke-width: 2.4; }
+.edge.back { stroke-dasharray: 5 4; }
 .node { cursor: pointer; }
 .node rect.box { fill: var(--node); stroke: var(--c); stroke-width: 1.6; filter: drop-shadow(0 1px 2px var(--shadow)); }
 .node rect.bar { fill: var(--c); }
@@ -128,6 +129,31 @@ const sourceBox = document.getElementById("source"), allButton = document.getEle
 const byId = new Map(data.nodes.map(n => [n.id, n]));
 const outs = new Map(data.nodes.map(n => [n.id, []])), ins = new Map(data.nodes.map(n => [n.id, []]));
 for (const [u, v] of data.edges) { outs.get(u).push(v); ins.get(v).push(u); }
+
+// back edges (a loop's body going back to its head): found by a DFS from the roots, an edge into a
+// node still on the DFS stack. The layout runs on the rest, which is a DAG; back edges are drawn apart.
+const backEdges = new Set();
+{
+    const state = new Map();   // id -> 1 on the stack, 2 done
+    const roots = data.nodes.filter(n => ins.get(n.id).length === 0).map(n => n.id);
+    for (const root of [...roots, ...data.nodes.map(n => n.id)]) {
+        if (state.has(root)) continue;
+        const stack = [[root, 0]];
+        state.set(root, 1);
+        while (stack.length) {
+            const top = stack[stack.length - 1], [u, i] = top;
+            if (i < outs.get(u).length) {
+                top[1]++;
+                const v = outs.get(u)[i];
+                if (state.get(v) === 1) backEdges.add(u + ">" + v);
+                else if (!state.has(v)) { state.set(v, 1); stack.push([v, 0]); }
+            } else { state.set(u, 2); stack.pop(); }
+        }
+    }
+}
+const isBack = (u, v) => backEdges.has(u + ">" + v);
+const fwdOuts = new Map(data.nodes.map(n => [n.id, outs.get(n.id).filter(v => !isBack(n.id, v))]));
+const fwdIns = new Map(data.nodes.map(n => [n.id, ins.get(n.id).filter(u => !isBack(u, n.id))]));
 document.getElementById("title").textContent =
     `${data.name} · ${data.nodes.length} nodes, ${data.edges.length} edges`;
 
@@ -163,14 +189,14 @@ const size = n => ({ w: Math.max(n.headW, n.open ? n.codeW : 0), h: NODE_H + (n.
 
 // ---------- layered layout ----------
 function layout() {
-    // layers: longest path from the roots (the CFG is a DAG)
-    const indeg = new Map(data.nodes.map(n => [n.id, ins.get(n.id).length]));
+    // layers: longest path from the roots, over the forward edges (a DAG once back edges are set aside)
+    const indeg = new Map(data.nodes.map(n => [n.id, fwdIns.get(n.id).length]));
     const layer = new Map(), order = [];
     const queue = data.nodes.filter(n => indeg.get(n.id) === 0).map(n => n.id);
     for (const id of queue) layer.set(id, 0);
     while (queue.length) {
         const u = queue.shift(); order.push(u);
-        for (const v of outs.get(u)) {
+        for (const v of fwdOuts.get(u)) {
             layer.set(v, Math.max(layer.get(v) ?? 0, layer.get(u) + 1));
             indeg.set(v, indeg.get(v) - 1);
             if (indeg.get(v) === 0) queue.push(v);
@@ -183,6 +209,7 @@ function layout() {
     const routes = [];   // per edge: the chain of item ids from u to v
     let dummy = 0;
     for (const [u, v] of data.edges) {
+        if (isBack(u, v)) { routes.push({ u, v, chain: [u, v], back: true }); continue; }
         const chain = [u];
         for (let l = layer.get(u) + 1; l < layer.get(v); l++) {
             const id = "d" + (dummy++);
@@ -192,8 +219,14 @@ function layout() {
         chain.push(v);
         routes.push({ u, v, chain });
     }
+    // nested loops: a back edge that spans another one is drawn outside it
+    const backs = routes.filter(r => r.back);
+    for (const r of backs) {
+        const span = [layer.get(r.v), layer.get(r.u)];
+        r.nest = backs.filter(o => o !== r && layer.get(o.v) >= span[0] && layer.get(o.u) <= span[1]).length;
+    }
     const up = new Map([...items.keys()].map(k => [k, []])), down = new Map([...items.keys()].map(k => [k, []]));
-    for (const r of routes) for (let i = 0; i + 1 < r.chain.length; i++) {
+    for (const r of routes) if (!r.back) for (let i = 0; i + 1 < r.chain.length; i++) {
         down.get(r.chain[i]).push(r.chain[i + 1]); up.get(r.chain[i + 1]).push(r.chain[i]);
     }
 
@@ -274,6 +307,18 @@ const el = (tag, attrs, text) => {
 
 function edgePath(r) {
     const a = box(r.u), b = box(r.v);
+    if (r.back) {
+        // out of u's right side, up around the right, into the head's right side
+        const ax = a.x + a.w / 2, ay = a.top + Math.min(a.h, NODE_H) / 2;
+        const bx = b.x + b.w / 2 + 2, by = b.top + NODE_H / 2;
+        // clear every node in the layers the loop spans, so the arc never crosses one
+        const lo = model.items.get(r.v).layer, hi = model.items.get(r.u).layer;
+        let right = Math.max(ax, bx);
+        for (const it of model.items.values())
+            if (it.real && it.layer >= lo && it.layer <= hi) { const p = box(it.id); right = Math.max(right, p.x + p.w / 2); }
+        const out = right + 36 + 14 * (r.nest || 0);
+        return `M${ax},${ay} C${out},${ay} ${out},${by} ${bx},${by}`;
+    }
     const points = [[a.x, a.top + a.h], ...r.chain.slice(1, -1).map(id => { const p = box(id); return [p.x, p.top]; }),
                     [b.x, b.top - 2]];
     let d = `M${points[0][0]},${points[0][1]}`;
@@ -317,7 +362,7 @@ function render() {
     model = layout();
     edgeLayer.textContent = ""; nodeLayer.textContent = ""; nodeEls.clear(); edgeEls.length = 0;
     for (const r of model.routes) {
-        const path = el("path", { class: "edge", "marker-end": "url(#arrow)" });
+        const path = el("path", { class: r.back ? "edge back" : "edge", "marker-end": "url(#arrow)" });
         edgeLayer.appendChild(path); edgeEls.push({ r, path });
     }
     for (const n of data.nodes) {

@@ -70,6 +70,7 @@ class ExitKind(Enum):
     FOR_LOOP = auto()
     WHILE = auto()
     WHILE_LOOP = auto()
+    LOOP_NEVER_RAN = auto()
     TRY = auto()
     EXCEPT = auto()
     TRY_EXCEPT_BRANCH = auto()
@@ -98,6 +99,8 @@ class ForEntry(Entry): pass
 
 class WhileLoopEntry(BranchEntry):pass
 class WhileEntry(Entry):pass
+
+class LoopNeverRanEntry(Entry): pass   # a loop's zero-iteration arm, no body
 
 class TryExceptBranchEntry(BranchEntry):pass
 class TryEntry(Entry):pass

@@ -424,17 +424,32 @@ class CFGGenerator():
                     )
                     while_tail = self._dfs(while_body, parent=while_entry)
 
-                    else_entry = ast_node_wrappers.ElseEntry()
-                    else_body = ast_node_wrappers.ElseBody(body=[ast_node_wrappers.ElseBody()])
-                    else_tail = self._dfs(else_body, parent=else_entry)
-                    self.scope_stack.pop()
+                    self.scope_stack.pop()   # before the literal else: a break/continue in it belongs to an outer loop
 
-                    cfg_nodes.append([while_entry,else_entry])
-                    tail = while_tail + else_tail
+                    # zero-iteration arm, no body to descend into
+                    never_ran_entry = ast_node_wrappers.LoopNeverRanEntry()
+                    never_ran_exit = ast_node_wrappers.Exit(kind=ast_node_wrappers.ExitKind.LOOP_NEVER_RAN)
+                    self.cfg.insert(never_ran_entry, never_ran_exit)
+
+                    # the end of the body either goes round again (back edge) or leaves,
+                    # merging with the never-ran arm
+                    for tail_node in while_tail:
+                        self.cfg.insert(tail_node, while_entry)
+                        self.cfg.insert(tail_node, never_ran_exit)
+
+                    # a literal else runs once after the loop, so it hangs after the merge
+                    if cur_node.orelse:
+                        else_entry = ast_node_wrappers.ElseEntry()
+                        tail = self._dfs(self._create_body(cur_node.orelse, ast_node_wrappers.ElseBody), parent=else_entry)
+                        self.cfg.insert(never_ran_exit, else_entry)
+                    else:
+                        tail = [never_ran_exit]
+
+                    cfg_nodes.append([while_entry, never_ran_entry])
                     cfg_nodes.append(tail)
                     for tail_node in tail:
                         skip.add((while_entry, tail_node))
-                        skip.add((else_entry, tail_node))
+                        skip.add((never_ran_entry, tail_node))
                     l = r+1
 
                 case ast.For():
@@ -478,17 +493,32 @@ class CFGGenerator():
                     )
                     for_tail = self._dfs(for_body, parent=for_entry)
 
-                    else_entry = ast_node_wrappers.ElseEntry()
-                    else_body = ast_node_wrappers.ElseBody(body=[ast_node_wrappers.ElseBody()])
-                    else_tail = self._dfs(else_body, parent=else_entry)
-                    self.scope_stack.pop()
+                    self.scope_stack.pop()   # before the literal else: a break/continue in it belongs to an outer loop
 
-                    cfg_nodes.append([for_entry, else_entry])
-                    tail = for_tail + else_tail
+                    # zero-iteration arm, no body to descend into
+                    never_ran_entry = ast_node_wrappers.LoopNeverRanEntry()
+                    never_ran_exit = ast_node_wrappers.Exit(kind=ast_node_wrappers.ExitKind.LOOP_NEVER_RAN)
+                    self.cfg.insert(never_ran_entry, never_ran_exit)
+
+                    # the end of the body either goes round again (back edge) or leaves,
+                    # merging with the never-ran arm
+                    for tail_node in for_tail:
+                        self.cfg.insert(tail_node, for_entry)
+                        self.cfg.insert(tail_node, never_ran_exit)
+
+                    # a literal else runs once after the loop, so it hangs after the merge
+                    if cur_node.orelse:
+                        else_entry = ast_node_wrappers.ElseEntry()
+                        tail = self._dfs(self._create_body(cur_node.orelse, ast_node_wrappers.ElseBody), parent=else_entry)
+                        self.cfg.insert(never_ran_exit, else_entry)
+                    else:
+                        tail = [never_ran_exit]
+
+                    cfg_nodes.append([for_entry, never_ran_entry])
                     cfg_nodes.append(tail)
                     for tail_node in tail:
                         skip.add((for_entry, tail_node))
-                        skip.add((else_entry, tail_node))
+                        skip.add((never_ran_entry, tail_node))
                     l = r+1
                 
                 case ast.Try():
