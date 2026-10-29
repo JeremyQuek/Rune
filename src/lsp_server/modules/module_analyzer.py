@@ -202,6 +202,16 @@ class ModuleAnalyzer():
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ for x in it:              │ the CFG desugars it to Assign(x, it): reads of it → def x (recipe ElementOf(it, None)) │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
+        │ loops (for / while)       │ the head branches into the body and LoopNeverRanEntry (no body, 0 iterations);         │
+        │                           │ the body's tail goes back to ForEntry/WhileEntry (back edge) and merges with the       │
+        │                           │ never-ran arm at ForLoopExit/WhileLoopExit: 0 iterations ∪ the loop's fixpoint         │
+        ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
+        │ for/while ... else:       │ ForElseEntry/WhileElseEntry hangs after the loop exit, so the else sees that join      │
+        ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
+        │ break / continue / return │ the CFG gives each its own node, linked straight to its target: break → loop exit      │
+        │                           │ (past the else), continue → ForExit/WhileExit, return → the function's Exit; a finally │
+        │                           │ on the way runs first. Nothing falls out of a jump, so these are the only merges       │
+        ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ except E as e:            │ desugared: read E → def e (recipe CaughtAs(E)), keyed at e, found after `as`           │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ with a as f:              │ the CFG flattens it: read a → def f (recipe EnteredFrom(a)), then the body             │
@@ -263,7 +273,12 @@ class ModuleAnalyzer():
             the module name.
           - Function bodies: return_stmts on the def entry, and a free name with no binding at the def
             linked to its binding at the module exit (late binding).
-          - Loops: the back edge isn't joined into the loop head (fixpoint).
+          - Loops: the CFG has back edges, so the Kahn walk stalls at a loop; it needs the SCC
+            condensation and a fixpoint over each loop's nodes.
+          - A finally run by a break/continue/return also flows on to the next code (one copy of
+            the finally serves every way in), so that code sees the jump's state too.
+          - while t: t is evaluated once (in WhileLoopEntry, outside the cycle), so reads in t
+            only see the pre-loop bindings.
 
         """
         match stmt:
@@ -672,7 +687,7 @@ def visualize_file(analyzer: ModuleAnalyzer, path: str | None = None) -> str:
     return str(out)
 
 if __name__=="__main__":
-    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/for_loop.py") 
+    module_analyzer = ModuleAnalyzer("/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/break_continue.py") 
     module_analyzer.process_file()
 
     visualize_file(module_analyzer)

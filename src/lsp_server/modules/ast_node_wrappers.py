@@ -44,6 +44,12 @@ class TryBody(Body): pass
 class FinallyBody(Body):pass
 class CaseBody(Body): pass
 
+# a jump statement in a node of its own: it ends its block and never falls through
+class Break(Body): pass
+class Continue(Body): pass
+class Return(Body): pass
+class Raise(Body): pass
+
 # --------- SESE Proxy Nodes --------- #
 
 class Entry(ast.AST):
@@ -65,6 +71,8 @@ class ExitKind(Enum):
     MODULE = auto()
     IF = auto()
     ELSE = auto()
+    FOR_ELSE = auto()
+    WHILE_ELSE = auto()
     IF_ELSE = auto()
     FOR = auto()
     FOR_LOOP = auto()
@@ -95,9 +103,11 @@ class ElseEntry(Entry): pass
 
 class ForLoopEntry(BranchEntry): pass
 class ForEntry(Entry): pass
+class ForElseEntry(Entry): pass     # a for's literal else, after the loop exit
 
 class WhileLoopEntry(BranchEntry):pass
 class WhileEntry(Entry):pass
+class WhileElseEntry(Entry): pass   # a while's literal else, after the loop exit
 
 class LoopNeverRanEntry(Entry): pass   # a loop's zero-iteration arm, no body
 

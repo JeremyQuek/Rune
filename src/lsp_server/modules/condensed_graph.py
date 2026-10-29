@@ -13,3 +13,6 @@ class SCCNode():
 class CondensedGraph():
     def __init__(self):
         self.scc_adj_list: dict[SCCNode, list[SCCNode]] = None
+    
+    def run_tarjan(pass):
+        pass

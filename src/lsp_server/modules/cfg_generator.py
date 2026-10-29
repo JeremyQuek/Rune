@@ -17,34 +17,38 @@ and for connecting raise statements to their enclosing except handlers.
 """
 # eq=False: contexts are compared by identity, like plain objects
 @dataclass(eq=False)
-class IfElseContext():
+class IfElseContextManager():
     pass
 
 @dataclass(eq=False)
-class FunctionContext():
+class ClassContextManager():
     pass
 
 @dataclass(eq=False)
-class ClassContext():
-    pass
+class FunctionContextManager():
+    returns: list[ast.AST] = field(default_factory=list)    
+
+# The targets of break/continue/return don't exist yet when the jump is found (they are made after
+# the body is built), so the jump registers itself on its loop's/function's context, which links it later.
+@dataclass(eq=False)
+class LoopContextManager():
+    breaks: list[ast.AST] = field(default_factory=list)      
+    continues: list[ast.AST] = field(default_factory=list)   
 
 @dataclass(eq=False)
-class LoopContext():
-    pass
-
-@dataclass(eq=False)
-class TryCatchContext():
+class TryCatchContextManager():
     finally_entry: ast_node_wrappers.FinallyEntry | None = None   # created up front so raises in the try can reach it
     except_block: list[tuple[ast.ExceptHandler, ast_node_wrappers.ExceptEntry]] = field(default_factory=list)
     raise_reaches_finally: bool = False      # if set, the finally's tails keep propagating the raise
+    jumps_through_finally: set[type[ast_node_wrappers.Body]] = field(default_factory=set)   # Break/Continue/Return kinds the finally resumes
 
-ScopeContext = IfElseContext | FunctionContext | ClassContext | LoopContext | TryCatchContext
+ScopeContextManager = IfElseContextManager | FunctionContextManager | ClassContextManager | LoopContextManager | TryCatchContextManager
 
 class CFGGenerator():
     def __init__(self, ast: ast.AST, cfg: "ControlFlowGraph") -> None:
         self.cfg = cfg
         self.ast = ast
-        self.scope_stack: list[ScopeContext] = []
+        self.scope_stack: list[ScopeContextManager] = []
 
     def make_graph(self) -> None:
         self._dfs(self.ast, ast_node_wrappers.ModuleEntry())
@@ -53,6 +57,8 @@ class CFGGenerator():
         ast_node_wrappers.ModuleEntry: (ast_node_wrappers.ModuleBody),
         ast_node_wrappers.IfEntry: (ast_node_wrappers.IfBody),
         ast_node_wrappers.ElseEntry: (ast_node_wrappers.ElseBody),
+        ast_node_wrappers.ForElseEntry: (ast_node_wrappers.ElseBody),
+        ast_node_wrappers.WhileElseEntry: (ast_node_wrappers.ElseBody),
         ast_node_wrappers.ForEntry: (ast_node_wrappers.ForBody),
         ast_node_wrappers.WhileEntry: (ast_node_wrappers.WhileBody),
         ast_node_wrappers.TryEntry: (ast_node_wrappers.TryBody),
@@ -66,6 +72,8 @@ class CFGGenerator():
         ast_node_wrappers.ModuleEntry: (ast_node_wrappers.ExitKind.MODULE),
         ast_node_wrappers.IfEntry: (ast_node_wrappers.ExitKind.IF),
         ast_node_wrappers.ElseEntry: (ast_node_wrappers.ExitKind.ELSE),
+        ast_node_wrappers.ForElseEntry: (ast_node_wrappers.ExitKind.FOR_ELSE),
+        ast_node_wrappers.WhileElseEntry: (ast_node_wrappers.ExitKind.WHILE_ELSE),
         ast_node_wrappers.ForEntry: (ast_node_wrappers.ExitKind.FOR),
         ast_node_wrappers.WhileEntry: (ast_node_wrappers.ExitKind.WHILE),
         ast_node_wrappers.TryEntry: (ast_node_wrappers.ExitKind.TRY),
@@ -170,10 +178,10 @@ class CFGGenerator():
         for i in range(len(self.scope_stack)-1, -1, -1):
             # Stop at the function boundary: a function body's raise propagates to its
             # call site, not to the try blocks lexically around the def
-            if isinstance(self.scope_stack[i], FunctionContext):
+            if isinstance(self.scope_stack[i], FunctionContextManager):
                 break
 
-            if isinstance(self.scope_stack[i], TryCatchContext):
+            if isinstance(self.scope_stack[i], TryCatchContextManager):
                 try_catch_context = self.scope_stack[i]
                 for (_, exception_entry) in try_catch_context.except_block:
                     self.cfg.insert(node, exception_entry)
@@ -182,6 +190,30 @@ class CFGGenerator():
                     self.cfg.insert(node, try_catch_context.finally_entry)
                     try_catch_context.raise_reaches_finally = True
                     break
+
+    def _link_jump(self, node: ast.AST, kind: type[ast_node_wrappers.Body]) -> None:
+        """
+        Sends a break/continue/return straight to its target, walking outward:
+          - Break/Continue: the nearest loop catches it (ForLoopExit / ForExit, linked by the loop case)
+          - Return:         the nearest function catches it (its body's Exit, linked by the def case)
+        A finally on the way out runs first: the node goes into the finally, which records the kind,
+        and the finally's tails carry the jump on outward (see the Try case).
+        One edge, no merging on the way: the target is the only place the jump's state is used.
+        """
+        for context in reversed(self.scope_stack):
+            if isinstance(context, TryCatchContextManager) and context.finally_entry is not None:
+                self.cfg.insert(node, context.finally_entry)
+                context.jumps_through_finally.add(kind)
+                return
+            if isinstance(context, LoopContextManager) and kind is not ast_node_wrappers.Return:
+                (context.breaks if kind is ast_node_wrappers.Break else context.continues).append(node)
+                return
+            if isinstance(context, FunctionContextManager) and kind is ast_node_wrappers.Return:
+                context.returns.append(node)
+                return
+            if isinstance(context, (FunctionContextManager, ClassContextManager)):
+                break
+        raise SyntaxError(f"'{kind.__name__.lower()}' outside {'function' if kind is ast_node_wrappers.Return else 'loop'}")
 
     def _create_body(self, stmts: list[ast.stmt], body_type: type[ast_node_wrappers.Body]) -> ast_node_wrappers.Body:
         return body_type(
@@ -230,6 +262,7 @@ class CFGGenerator():
         l=0
         cfg_nodes = [[parent]]
         skip = set()
+        jumped = False   # the block ended in break/continue/return/raise: nothing falls out of it
         for r in range(len(code_body)):
             cur_node = code_body[r]
             match cur_node:
@@ -282,9 +315,17 @@ class CFGGenerator():
                         end_col_offset=cur_node.body[-1].end_col_offset,
                     )
 
-                    self.scope_stack.append(FunctionContext())
-                    self._dfs(func_body, parent=func_entry)
+                    function_context = FunctionContextManager()
+                    self.scope_stack.append(function_context)
+                    func_tail = self._dfs(func_body, parent=func_entry)
                     self.scope_stack.pop()
+
+                    # every return goes straight to the body's Exit; a body that always returns has none yet
+                    if function_context.returns and not func_tail:
+                        func_tail = [ast_node_wrappers.Exit(kind=self._get_exit_kind(func_entry))]
+                    for return_node in function_context.returns:
+                        for tail_node in func_tail:
+                            self.cfg.insert(return_node, tail_node)
 
                     # right after the body is built, the def entry's only edge goes into the body
                     entry_node = self.cfg.nodes[func_entry]
@@ -341,7 +382,7 @@ class CFGGenerator():
                         end_col_offset=cur_node.body[-1].end_col_offset,
                     )
 
-                    self.scope_stack.append(ClassContext())
+                    self.scope_stack.append(ClassContextManager())
                     tail = self._dfs(class_body, parent=class_entry)
                     self.scope_stack.pop()
 
@@ -365,7 +406,7 @@ class CFGGenerator():
                     if_else_entry = self._test_entry(ast_node_wrappers.IfElseEntry, cur_node.test)   # elif is a nested If, so it gets its own
                     cfg_nodes.append([if_else_entry])
 
-                    self.scope_stack.append(IfElseContext())
+                    self.scope_stack.append(IfElseContextManager())
                     if_entry = ast_node_wrappers.IfEntry()
                     if_body = ast_node_wrappers.IfBody(
                         body=cur_node.body,
@@ -413,7 +454,8 @@ class CFGGenerator():
                     while_loop_entry = self._test_entry(ast_node_wrappers.WhileLoopEntry, cur_node.test)
                     cfg_nodes.append([while_loop_entry])
 
-                    self.scope_stack.append(LoopContext())
+                    loop_context = LoopContextManager()
+                    self.scope_stack.append(loop_context)
                     while_entry = ast_node_wrappers.WhileEntry()
                     while_body = ast_node_wrappers.WhileBody(
                         body=cur_node.body,
@@ -433,17 +475,30 @@ class CFGGenerator():
 
                     # the end of the body either goes round again (back edge) or leaves,
                     # merging with the never-ran arm
+                    # continue goes to the body's Exit, which then goes round again or leaves;
+                    # a body that always jumps has no Exit yet
+                    if loop_context.continues and not while_tail:
+                        while_tail = [ast_node_wrappers.Exit(kind=self._get_exit_kind(while_entry))]
+                    for continue_node in loop_context.continues:
+                        for tail_node in while_tail:
+                            self.cfg.insert(continue_node, tail_node)
                     for tail_node in while_tail:
                         self.cfg.insert(tail_node, while_entry)
                         self.cfg.insert(tail_node, loop_exit)
 
                     # a literal else runs once after the loop, so it hangs after the merge
                     if cur_node.orelse:
-                        else_entry = ast_node_wrappers.ElseEntry()
+                        else_entry = ast_node_wrappers.WhileElseEntry()
                         tail = self._dfs(self._create_body(cur_node.orelse, ast_node_wrappers.ElseBody), parent=else_entry)
                         self.cfg.insert(loop_exit, else_entry)
                     else:
                         tail = [loop_exit]
+                    # break leaves the loop: straight to the loop exit, or past the else (which it skips)
+                    if cur_node.orelse:
+                        tail = tail + loop_context.breaks
+                    else:
+                        for break_node in loop_context.breaks:
+                            self.cfg.insert(break_node, loop_exit)
 
                     cfg_nodes.append([while_entry, never_ran_entry])
                     cfg_nodes.append(tail)
@@ -466,7 +521,8 @@ class CFGGenerator():
                     for_loop_entry = ast_node_wrappers.ForLoopEntry()
                     cfg_nodes.append([for_loop_entry])
 
-                    self.scope_stack.append(LoopContext())
+                    loop_context = LoopContextManager()
+                    self.scope_stack.append(loop_context)
                     # for x in iter: ... binds x at the top of every iteration,
                     # so the loop-body entry node carries that assign.
                     for_assign = ast.Assign(
@@ -502,17 +558,30 @@ class CFGGenerator():
 
                     # the end of the body either goes round again (back edge) or leaves,
                     # merging with the never-ran arm
+                    # continue goes to the body's Exit, which then goes round again or leaves;
+                    # a body that always jumps has no Exit yet
+                    if loop_context.continues and not for_tail:
+                        for_tail = [ast_node_wrappers.Exit(kind=self._get_exit_kind(for_entry))]
+                    for continue_node in loop_context.continues:
+                        for tail_node in for_tail:
+                            self.cfg.insert(continue_node, tail_node)
                     for tail_node in for_tail:
                         self.cfg.insert(tail_node, for_entry)
                         self.cfg.insert(tail_node, loop_exit)
 
                     # a literal else runs once after the loop, so it hangs after the merge
                     if cur_node.orelse:
-                        else_entry = ast_node_wrappers.ElseEntry()
+                        else_entry = ast_node_wrappers.ForElseEntry()
                         tail = self._dfs(self._create_body(cur_node.orelse, ast_node_wrappers.ElseBody), parent=else_entry)
                         self.cfg.insert(loop_exit, else_entry)
                     else:
                         tail = [loop_exit]
+                    # break leaves the loop: straight to the loop exit, or past the else (which it skips)
+                    if cur_node.orelse:
+                        tail = tail + loop_context.breaks
+                    else:
+                        for break_node in loop_context.breaks:
+                            self.cfg.insert(break_node, loop_exit)
 
                     cfg_nodes.append([for_entry, never_ran_entry])
                     cfg_nodes.append(tail)
@@ -539,10 +608,10 @@ class CFGGenerator():
                     # outside it, so a raise in an except body propagates outward instead
                     # of being caught by its sibling handlers.
                     finally_entry = ast_node_wrappers.FinallyEntry() if cur_node.finalbody else None
-                    try_catch_context = TryCatchContext(finally_entry)
+                    try_catch_context = TryCatchContextManager(finally_entry)
                     # Handler bodies don't see their siblings, but a raise inside one
                     # still runs this try's finally before propagating outward.
-                    handler_context = TryCatchContext(finally_entry)
+                    handler_context = TryCatchContextManager(finally_entry)
                     try_except_tails = []
                     try_except_entries = []
                     for handler in cur_node.handlers:
@@ -625,6 +694,10 @@ class CFGGenerator():
                         if try_catch_context.raise_reaches_finally or handler_context.raise_reaches_finally:
                             for finally_tail in finally_tails:
                                 self._link_raise(finally_tail)
+                        # likewise a break/continue/return that ran this finally carries on to its target
+                        for kind in try_catch_context.jumps_through_finally | handler_context.jumps_through_finally:
+                            for finally_tail in finally_tails:
+                                self._link_jump(finally_tail, kind)
                     l = r+1
                 
                 case ast.Match():
@@ -702,55 +775,22 @@ class CFGGenerator():
                             skip.add((entry_node, tail_node))
                     l = r+1
 
-                case ast.Return() | ast.Yield():
-                    stmts = code_body[l:r+1]
-                    cfg_nodes.append([CustomBody(
-                        body=stmts,
-                        lineno=stmts[0].lineno,
-                        col_offset=stmts[0].col_offset,
-                        end_lineno=stmts[-1].end_lineno,
-                        end_col_offset=stmts[-1].end_col_offset,
-                    )])
-
-                    # Validation check:
-                    in_function = False
-                    for i in range(len(self.scope_stack)-1,-1,-1):
-                        if isinstance(self.scope_stack[i], FunctionContext):
-                            in_function = True
-                            break
-                    if not in_function: raise SyntaxError
-
-                    l=r+1
+                case ast.Return() | ast.Break() | ast.Continue():
+                    if r > l:
+                        cfg_nodes.append([self._create_body(code_body[l:r], CustomBody)])
+                    kind = {ast.Return: ast_node_wrappers.Return, ast.Break: ast_node_wrappers.Break,
+                            ast.Continue: ast_node_wrappers.Continue}[type(cur_node)]
+                    jump_node = self._create_body([cur_node], kind)
+                    cfg_nodes.append([jump_node])
+                    self._link_jump(jump_node, kind)
+                    jumped = True
+                    l = len(code_body)   # the rest of the block is dead code
                     break
-                
-                case ast.Break() | ast.Continue() :
-                    stmts = code_body[l:r+1]
-                    cfg_nodes.append([CustomBody(
-                        body=stmts,
-                        lineno=stmts[0].lineno,
-                        col_offset=stmts[0].col_offset,
-                        end_lineno=stmts[-1].end_lineno,
-                        end_col_offset=stmts[-1].end_col_offset,
-                    )])
 
-                    # Validation check:
-                    for i in range(len(self.scope_stack)-1,-1,-1):
-                        if isinstance(self.scope_stack[i], FunctionContext):
-                            raise SyntaxError
-                        if isinstance(self.scope_stack[i], LoopContext):
-                            break
-                    l=r+1
-                    break
-                
                 case ast.Raise():
-                    stmts = code_body[l:r+1]
-                    cur_node = CustomBody(
-                        body=stmts,
-                        lineno=stmts[0].lineno,
-                        col_offset=stmts[0].col_offset,
-                        end_lineno=stmts[-1].end_lineno,
-                        end_col_offset=stmts[-1].end_col_offset,
-                    )
+                    if r > l:
+                        cfg_nodes.append([self._create_body(code_body[l:r], CustomBody)])
+                    cur_node = self._create_body([cur_node], ast_node_wrappers.Raise)
                     cfg_nodes.append([cur_node])
 
                     """
@@ -774,8 +814,8 @@ class CFGGenerator():
                     """
                     
                     self._link_raise(cur_node)
-
-                    l=r+1
+                    jumped = True
+                    l = len(code_body)   # the rest of the block is dead code
                     break
 
         if l < len(code_body):
@@ -788,8 +828,10 @@ class CFGGenerator():
                 end_col_offset=stmts[-1].end_col_offset,
             )])
         
-        exit_node = ast_node_wrappers.Exit(kind =  self._get_exit_kind(parent))
-        cfg_nodes.append([exit_node])
+        # a block that ended in a jump has no normal way out, so no Exit (an empty frontier)
+        if not jumped:
+            exit_node = ast_node_wrappers.Exit(kind =  self._get_exit_kind(parent))
+            cfg_nodes.append([exit_node])
         # Step 2 insert the edges
         for i in range(len(cfg_nodes)-1):
             for u in cfg_nodes[i]:
@@ -797,5 +839,5 @@ class CFGGenerator():
                     if (u, v) not in skip:
                         self.cfg.insert(u, v)
         
-        # return the exit noe
-        return cfg_nodes[-1]
+        # return the exit node
+        return [] if jumped else cfg_nodes[-1]

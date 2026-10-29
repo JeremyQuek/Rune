@@ -27,6 +27,7 @@ class NodeType(Enum):
     WHILE_BODY = auto()
     FINALLY_BODY = auto()
     CASE_BODY = auto()
+    JUMP = auto()
 
 # eq=False: nodes are dict keys (adj, indeg), so they hash by identity
 @dataclass(eq=False)
@@ -57,6 +58,8 @@ class ControlFlowGraph():
         ast_node_wrappers.IfEntry: NodeType.IF_BODY,
         ast_node_wrappers.ElseEntry: NodeType.ELSE_BODY,
         ast_node_wrappers.LoopNeverRanEntry: NodeType.ELSE_BODY,
+        ast_node_wrappers.ForElseEntry: NodeType.ELSE_BODY,
+        ast_node_wrappers.WhileElseEntry: NodeType.ELSE_BODY,
         ast_node_wrappers.ForEntry: NodeType.FOR_BODY,
         ast_node_wrappers.WhileEntry: NodeType.WHILE_BODY,
         ast_node_wrappers.TryEntry: NodeType.TRY_BODY,
@@ -75,6 +78,10 @@ class ControlFlowGraph():
         ast_node_wrappers.FinallyBody: NodeType.FINALLY_BODY,
         ast_node_wrappers.CaseBody: NodeType.CASE_BODY,
         ast_node_wrappers.Exit: NodeType.EXIT,
+        ast_node_wrappers.Break: NodeType.JUMP,
+        ast_node_wrappers.Continue: NodeType.JUMP,
+        ast_node_wrappers.Return: NodeType.JUMP,
+        ast_node_wrappers.Raise: NodeType.JUMP,
         }
 
     def __init__(self, tree: ast.AST) -> None:
@@ -265,7 +272,7 @@ def visualize_graph(cfg: ControlFlowGraph, source: str | None = None, name: str 
 
 
 if __name__ == "__main__":
-    path = "/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/for_loop.py"
+    path = "/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/jump_finally.py"
     with open(path, "r", encoding="utf-8") as f:
         source = f.read()
 
