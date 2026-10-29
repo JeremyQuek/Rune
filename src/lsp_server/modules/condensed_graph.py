@@ -179,7 +179,7 @@ def visualize_condensed(cg: CondensedGraph, source: str | None = None, name: str
 
 
 if __name__ == "__main__":
-    path = "/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/nested_jumps.py"
+    path = "/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/break_continue.py"
     with open(path, "r", encoding="utf-8") as f:
         source = f.read()
 

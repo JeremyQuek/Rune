@@ -45,6 +45,7 @@ class Origin(Enum):
     PARAMETER = auto()
     IMPORT = auto()
     JOIN = auto()
+    UNBOUND = auto()   # a name with no value on one arm of a merge
 
 
 @dataclass(eq=False)         # compared by identity: entries are nodes in a DAG

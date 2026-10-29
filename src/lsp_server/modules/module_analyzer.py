@@ -4,7 +4,7 @@ import re
 import tokenize
 from collections import deque
 
-from type_lattice import LatticeValue
+from type_lattice import UNBOUND, LatticeValue
 from lexical_environment import Environment, Key, join
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from control_flow_graph import ControlFlowGraph, Node
@@ -41,6 +41,7 @@ class ModuleAnalyzer():
         self.cfg = ControlFlowGraph(module_ast)
         # self.cfg._pretty_print()
         self._traverse_graph()
+        self._join_elimintaion()
 
     def _traverse_graph(self):
         """
@@ -116,6 +117,32 @@ class ModuleAnalyzer():
         if isinstance(u.ast_node, ClassDefinitionEntry):
             defn = u.ast_node.body[0].value   # the class name is bound in the enclosing scope, then the body runs in its own
             self.env.push_scope(defn.name, defn.lineno)
+
+    def _join_elimintaion(self)->None:
+        """
+        Post-processing, once every loop has settled: a JOIN entry's parents become the non-join keys
+        reachable through other joins, so a join is one layer deep. Union is associative, so no type
+        changes. The inner joins are kept: reads and other entries may still point at them.
+        """
+        table = self.provenance_table
+        flat = {}
+        for key, entry in table.items():
+            if entry.origin != Origin.JOIN:
+                continue
+            seen, stack, leaves = {key}, list(reversed(entry.parents)), []
+            while stack:   # walk through joins, collecting what isn't one; seen breaks the loop cycles
+                parent = stack.pop()
+                if parent in seen:
+                    continue
+                seen.add(parent)
+                if table[parent].origin == Origin.JOIN:
+                    stack.extend(reversed(table[parent].parents))
+                else:
+                    leaves.append(parent)
+            flat[key] = leaves
+        for key, leaves in flat.items():   # assigned after, so every join is flattened from the settled table
+            table[key].parents = leaves
+
 
     def _deliver(self, u: Node, v: Node) -> None:
         # Share a ref of the env to a single child else clone the env to all children
@@ -234,7 +261,7 @@ class ModuleAnalyzer():
         │ several children (branch) │ each child gets a clone of the env (one child: the same env)                           │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ several parents (merge)   │ the parents' envs are joined: a name whose keys differ gets                            │
-        │                           │ one JOIN entry ("join", node_id, x); unbound in an arm → ("unbound", x)                │
+        │                           │ one JOIN entry ("join", node_id, x); unbound in an arm → ("unbound", node_id, x)       │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ if / elif / while t:      │ the branch entry carries t: reads of t                                                 │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
@@ -446,12 +473,13 @@ class ModuleAnalyzer():
         return key
 
     def _join_entry(self, node_id: int, symbol: str, keys: list[Key | None]) -> Key:
-        """The JOIN entry for symbol at merge node node_id; None (unbound in an arm) → ("unbound", symbol)."""
+        """The JOIN entry for symbol at merge node node_id; None (unbound in an arm) → ("unbound", node_id, symbol)."""
         parents = []
         for key in keys:
-            if key is None:
-                key = ("unbound", symbol)
-                self.provenance_table.setdefault(key, TableEntry(symbol, None))
+            if key is None:   # known without resolving: the name has no value on that arm
+                key = ("unbound", node_id, symbol)
+                self.provenance_table[key] = TableEntry(symbol, None, type=LatticeValue.of(UNBOUND), resolved=True,
+                                                        origin=Origin.UNBOUND)
             parents.append(key)
         key = ("join", node_id, symbol)
         self.provenance_table[key] = TableEntry(symbol, None, parents=parents, origin=Origin.JOIN)
