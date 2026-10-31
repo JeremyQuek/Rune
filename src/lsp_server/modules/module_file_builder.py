@@ -175,7 +175,7 @@ class ModuleFileBuilder():
         ├──────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ Definition entry         │ expr = the RHS (the recipe), parents = that statement's read keys                                                      │
         ├──────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-        │ Keys                     │ (col, line) of the name itself, so the hover finds it. Attribute links are keyed at the attribute's name (b in a.b).   │
+        │ Keys                     │ (line, col) of the name itself, so the hover finds it. Attribute links are keyed at the attribute's name (b in a.b).   │
         │                          │ Only builtins have non-positional keys ("builtins", name), because they don't appear in the source                     │
         ├──────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ Resolved at build time   │ a bare x: T, an annotated parameter, and x = <lone Constant> (x = 5 → int, no dunder needed; to confirm). Everything   │
@@ -411,7 +411,7 @@ class ModuleFileBuilder():
                 # import m.a.b: m (IMPORT) <- m.a <- m.a.b, binds m;  `as k` adds k <- m.a.b, binds k
                 for alias in names:
                     parts = alias.name.split(".")
-                    keys = self._path([(part, (alias.col_offset + len(".".join(parts[:i])) + (i > 0), alias.lineno))
+                    keys = self._path([(part, (alias.lineno, alias.col_offset + len(".".join(parts[:i])) + (i > 0)))
                                        for i, part in enumerate(parts)])
                     if alias.asname:
                         self._bind(alias.asname, self._asname_key(alias),
@@ -437,7 +437,7 @@ class ModuleFileBuilder():
             case ast.Global(names=names) | ast.Nonlocal(names=names):
                 # global a / nonlocal a: a read of each name, so hovering it shows what it refers to
                 for name, key in zip(names, self._get_declared_key_offset(stmt)):
-                    col, line = key
+                    line, col = key
                     node = ast.Name(id=name, ctx=ast.Load(), lineno=line, col_offset=col,
                                     end_lineno=line, end_col_offset=col + len(name))
                     definition = self.env.which(name)
@@ -537,7 +537,7 @@ class ModuleFileBuilder():
         segments: list[tuple[str, Key]] = []
         started = named = False
         for tok in tokenize.generate_tokens(io.StringIO(text).readline):
-            position = (tok.start[1], stmt.lineno + tok.start[0] - 1)
+            position = (stmt.lineno + tok.start[0] - 1, tok.start[1])
             if not started:
                 started = tok.type == tokenize.NAME and tok.string == "from" and position == self._key(stmt)
             elif tok.type == tokenize.NAME:
@@ -557,7 +557,7 @@ class ModuleFileBuilder():
         return ast.Attribute(value=ast.Name(id=receiver, ctx=ast.Load()), attr=attr, ctx=ast.Load())
 
     def _asname_key(self, alias: ast.alias) -> Key:
-        return (alias.end_col_offset - len(alias.asname), alias.end_lineno)
+        return (alias.end_lineno, alias.end_col_offset - len(alias.asname))
 
     def _evaluated_at_definition(self, defn: ast.FunctionDef | ast.ClassDef) -> list[ast.expr]:
         if isinstance(defn, ast.ClassDef):
@@ -586,7 +586,7 @@ class ModuleFileBuilder():
         keys = []
         for pattern in patterns:
             found = re.compile(pattern).search(text, start)
-            keys.append((found.start(1), line))
+            keys.append((line, found.start(1)))
             start = found.end(1)
         return keys
 
@@ -682,10 +682,10 @@ class ModuleFileBuilder():
         return key
 
     def _key(self, node: ast.AST) -> Key:
-        """(col, line) of a name; for an attribute, of the attribute's own name (b in a.b)."""
+        """(line, col) of a name; for an attribute, of the attribute's own name (b in a.b)."""
         if isinstance(node, ast.Attribute):
-            return (node.end_col_offset - len(node.attr), node.end_lineno)
-        return (node.col_offset, node.lineno)
+            return (node.end_lineno, node.end_col_offset - len(node.attr))
+        return (node.lineno, node.col_offset)
 
     def _spine(self, node: ast.expr) -> tuple[ast.expr, list[ast.expr]]:
         """a.f(x)[i].c -> (Name a, [.c, [i], (x), .f]): the root and the links above it, outermost first."""
@@ -706,7 +706,7 @@ class ModuleFileBuilder():
 def visualize_file(analyzer: ModuleFileBuilder, path: str | None = None) -> str:
     """
     Debug view of the provenance table: the source file with every entry boxed at its
-    (col, line), and an arrow from each parent to its child. Entries with no position
+    (line, col), and an arrow from each parent to its child. Entries with no position
     (builtins, modules) sit in a column on the right; only the ones something points to
     are shown. Hover an entry to see its trace (parents, orange) and what uses it (cyan);
     click to pin. Writes the page to `path` (default: the temp dir) and opens it.

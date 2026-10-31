@@ -18,7 +18,7 @@ Python's own `symtable` module decides them up front for the whole file.
 BUILTIN_SCOPE_ID = "builtins"
 
 # Provenance table key of a definition:
-#   (col, line)             a real assignment
+#   (line, col)             a real assignment
 #   ("builtins", name)      a builtin, treated as an implicit `from builtins import name`
 #   ("join", node_id, x)    a merge of several definitions at a CFG join
 Key = tuple[int | str, ...]

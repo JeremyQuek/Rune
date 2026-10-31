@@ -9,17 +9,17 @@ class GlobalNamespaceTable:
     │        │                                         │ key, ...}                          │ final global scope)                         │                                             │
     ├────────┼─────────────────────────────────────────┼────────────────────────────────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┤
     │ class  │ the class's definition key, e.g.        │ its body scope: {b: key, bark:     │ at the class's Exit                         │ only through a type: a value whose type     │
-    │        │ ("animals", (6, 3))                     │ key} + its bases                   │                                             │ points at that class                        │
+    │        │ ("animals", (3, 6))                     │ key} + its bases                   │                                             │ points at that class                        │
     └────────┴─────────────────────────────────────────┴────────────────────────────────────┴─────────────────────────────────────────────┴─────────────────────────────────────────────┘
 
-    What it stores: definition keys, not types. It says where Dog.b is defined, (4, 5) in animals. The type comes from asking animals.get_type((4, 5)), which computes and caches it. So writing the table never needs type information.
+    What it stores: definition keys, not types. It says where Dog.b is defined, (5, 4) in animals. The type comes from asking animals.get_type((5, 4)), which computes and caches it. So writing the table never needs type information.
 
     How it's used: every dot is the same operation. Find the receiver's type, look up the member in that type's row, then ask the owning module for that key's type.
     from animals import Dog
     a = Dog()
-    a.b      → a's type: instance of ("animals", (6, 3))
-            → table[("animals", (6, 3))]["b"] → key (4, 5) in animals
-            → animals.get_type((4, 5)) → int
+    a.b      → a's type: instance of ("animals", (3, 6))
+            → table[("animals", (3, 6))]["b"] → key (5, 4) in animals
+            → animals.get_type((5, 4)) → int
     Imports work the same way: m resolves to module(m), and m.a → table["m"]["a"].
 
     Rules we agreed:

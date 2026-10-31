@@ -8,8 +8,8 @@ Minimal single-file type analyzer (MVP).
 Walks the top-level statements of a module in order and traces variable types.
 Only straight-line code is handled: no functions, no if/else, no loops.
 
-Output is a type table: {(col, line): TableEntry} for every variable occurrence,
-where (col, line) is the position the symbol starts at, as reported by ast
+Output is a type table: {(line, col): TableEntry} for every variable occurrence,
+where (line, col) is the position the symbol starts at, as reported by ast
 (col is 0-based, line is 1-based).
 
 Each TableEntry points back to the entries its type was traced from, so following
@@ -99,7 +99,7 @@ def operands_of(node: ast.expr, env: dict[str, TableEntry]) -> list[Operand]:
 def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
     tree = ast.parse(source)
     env = {}    # variable name -> entry of its latest assignment
-    table = {}  # (col, line) -> entry for the symbol at that position
+    table = {}  # (line, col) -> entry for the symbol at that position
 
     for stmt in tree.body:
         code = ast.unparse(stmt)
@@ -109,7 +109,7 @@ def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
         # trace starts there. Done before the write so `x = x + 1` sees the old x.
         for node in ast.walk(stmt):
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in env:
-                table[(node.col_offset, node.lineno)] = env[node.id]
+                table[(node.lineno, node.col_offset)] = env[node.id]
 
         # Step 2: record every variable written in this statement
         match stmt:
@@ -120,19 +120,19 @@ def analyze(source: str) -> dict[tuple[int, int], TableEntry]:
                 for target in stmt.targets:
                     if isinstance(target, ast.Name):
                         env[target.id] = entry
-                        table[(target.col_offset, target.lineno)] = entry
+                        table[(target.lineno, target.col_offset)] = entry
 
             case ast.AnnAssign(target=ast.Name()):
                 # x: int = ... trusts the annotation, so the trace starts here
                 operands = operands_of(stmt.value, env) if stmt.value else []
                 entry = TableEntry(type=ast.unparse(stmt.annotation), line=stmt.lineno, code=code, operands=operands)
                 env[stmt.target.id] = entry
-                table[(stmt.target.col_offset, stmt.target.lineno)] = entry
+                table[(stmt.target.lineno, stmt.target.col_offset)] = entry
 
     return table
 
 
 if __name__ == "__main__":
     with open("tests/trace_dag_preview.py", "r", encoding="utf-8") as f:
-        for (col, line), entry in analyze(f.read()).items():
+        for (line, col), entry in analyze(f.read()).items():
             print(f"line {line}, col {col}: {entry.type}  <- {entry.code}  parents: {[p.code for p in entry.parents]}")

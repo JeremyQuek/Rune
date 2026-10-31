@@ -7,7 +7,7 @@ from type_lattice import LatticeValue
 
 
 """
-ProvenanceTable              -> the occurrences: where did the type at (col, line)
+ProvenanceTable              -> the occurrences: where did the type at (line, col)
                                 come from? every use/definition gets an entry,
                                 and parents point to the entries it was derived from.
 
@@ -27,17 +27,17 @@ JOIN
 Where branches merge, the environments of the arms are joined. A name whose arms hold
 different keys gets a new join key:
 
-    x = 1          # (0, 1)
+    x = 1          # (1, 0)
     if c:
-        x = "s"    # (4, 3)
-    print(x)       # (6, 4)
+        x = "s"    # (3, 4)
+    print(x)       # (4, 6)
 
-    arm 1 env:   x → SymbolTableEntry(scope_id, (0, 1))
-    arm 2 env:   x → SymbolTableEntry(scope_id, (4, 3))
+    arm 1 env:   x → SymbolTableEntry(scope_id, (1, 0))
+    arm 2 env:   x → SymbolTableEntry(scope_id, (3, 4))
     merged env:  x → SymbolTableEntry(scope_id, ("join", 7, "x"))
 
-Implicit Entry: ("join", 7, "x") → TableEntry("x", None, origin=Origin.JOIN, parents=[(0, 1), (4, 3)])
-(6, 4)           → TableEntry("x", <Name x>, parents=[("join", 7, "x")])
+Implicit Entry: ("join", 7, "x") → TableEntry("x", None, origin=Origin.JOIN, parents=[(1, 0), (3, 4)])
+(4, 6)           → TableEntry("x", <Name x>, parents=[("join", 7, "x")])
 """
 
 class Origin(Enum):

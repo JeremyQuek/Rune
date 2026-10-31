@@ -130,7 +130,7 @@ const extX = codeX + (maxLen + 10) * CW;
 let row = 0;
 for (const n of data.nodes) {
 if (n.pos) {
-    n.x = codeX + n.pos[0] * CW - 2; n.y = PAD + (n.pos[1] - 1) * LH;
+    n.x = codeX + n.pos[1] * CW - 2; n.y = PAD + (n.pos[0] - 1) * LH;   // pos is [line, col]
     n.w = Math.max(1, n.label.length) * CW + 4;
 } else {
     n.x = extX; n.y = PAD + row++ * LH * 1.4; n.w = (n.symbol.length + 2) * CW + 12;

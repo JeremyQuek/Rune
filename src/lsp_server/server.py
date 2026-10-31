@@ -24,7 +24,7 @@ Never print() in this process: stdout is the LSP channel. Log to stderr instead.
 """
 
 server = LanguageServer("rune", "0.1.0")
-file_dict = {}  # file uri -> {(col, line): TableEntry}
+file_dict = {}  # file uri -> {(line, col): TableEntry}
 TRACE_PREVIEW_LENGTH = 3  # trace steps shown directly in the hover
 FAKE_CROSS_FILE = True    # TEMP: graft a chain from tests/random_source.py onto every graph (preview cross-file UI before imports exist)
 FAKE_FILE = (Path(__file__).parents[2] / "tests" / "integration/random_source.py").as_uri()
@@ -61,7 +61,7 @@ def hover(ls: LanguageServer, params: types.HoverParams):
     # name span covers the cursor (hovering anywhere on `suffix`, not just the `s`)
     name = doc.word_at_position(params.position)
     entry = next(
-        (e for (c, l), e in file_dict.get(uri, {}).items()
+        (e for (l, c), e in file_dict.get(uri, {}).items()
          if l == line + 1 and c <= col < c + len(name)),  # ast lines are 1-based
         None,
     )
