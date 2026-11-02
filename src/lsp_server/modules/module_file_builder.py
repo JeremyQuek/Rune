@@ -147,7 +147,9 @@ class ModuleFileBuilder():
             defn = u.ast_node.body[0].value   # the class name is bound in the enclosing scope, then the body runs in its own
             [site] = self._get_declared_key_offset(defn)
             scope = self.env.push_scope(defn, site)
-            self.global_namespace_table.create_entry(scope.export_namespace_key)
+            metaclass = next((self._base_key(k.value) for k in defn.keywords if k.arg == "metaclass"), None)
+            self.global_namespace_table.create_entry(scope.export_namespace_key,
+                                                     [self._base_key(base) for base in defn.bases], metaclass)
             # A's ClassDef entry, written just above: the class object, resolved here where its row key exists
             entry = self.provenance_table[site]
             entry.type, entry.resolved = LatticeValue.of(("type", scope.export_namespace_key)), True
@@ -177,6 +179,17 @@ class ModuleFileBuilder():
         for key, leaves in flat.items():   # assigned after, so every join is flattened from the settled table
             table[key].parents = leaves
 
+
+    def _base_key(self, base: ast.expr) -> Key | None:
+        """
+        A base's (or metaclass's) read key, which the evaluator resolves to type[B] and so to B's row: B, the C in mod.C,
+        the Generic in Generic[T]. None for a base that isn't a name (make_base()): the MRO is unknown past it.
+        """
+        while isinstance(base, ast.Subscript):
+            base = base.value
+        if isinstance(base, (ast.Name, ast.Attribute)) and self._key(base) in self.provenance_table:
+            return self._key(base)
+        return None
 
     def _module_scope_only(self, env: Environment) -> Environment:
         if len(env.scopes) == 1:
@@ -374,8 +387,8 @@ class ModuleFileBuilder():
             back to m.* (latest first), then builtins.
           - Relative roots (., ..) are resolved to a module by the ImportResolver, which
             needs the importing file.
-          - Class Exit: the class body's {member: key} + bases → GlobalNamespaceTable, row
-            keyed by the class's definition key. Needs push_scope/pop_scope for the body.
+          - Class Exit: the class body's {member: key} → GlobalNamespaceTable class_attrs (bases are
+            written at the class push, _base_key).
           - Module Exit: the global scope {name: key} → GlobalNamespaceTable class_attrs, row keyed by
             (path,) (_export_globals).
           - Function bodies: return_stmts on the def entry, and a free name with no binding at the def

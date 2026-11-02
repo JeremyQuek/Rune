@@ -7,17 +7,17 @@
 <style>
 :root {
     --bg: #ffffff; --panel: #f6f7f9; --border: #d9dce1; --text: #1f2328; --muted: #6b7280;
-    --code: #4b5563; --edge: #c3c8d0; --cls: #7c3aed; --classattr: #059669; --instattr: #2563eb; --hi: #ea580c;
+    --code: #4b5563; --edge: #c3c8d0; --cls: #7c3aed; --classattr: #059669; --instattr: #2563eb; --base: #d97706; --hi: #ea580c;
 }
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
     --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
-    --code: #a3acb9; --edge: #39404d; --cls: #a78bfa; --classattr: #34d399; --instattr: #60a5fa; --hi: #fb923c;
+    --code: #a3acb9; --edge: #39404d; --cls: #a78bfa; --classattr: #34d399; --instattr: #60a5fa; --base: #fbbf24; --hi: #fb923c;
     }
 }
 :root[data-theme="dark"] {
     --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
-    --code: #a3acb9; --edge: #39404d; --cls: #a78bfa; --classattr: #34d399; --instattr: #60a5fa; --hi: #fb923c;
+    --code: #a3acb9; --edge: #39404d; --cls: #a78bfa; --classattr: #34d399; --instattr: #60a5fa; --base: #fbbf24; --hi: #fb923c;
 }
 #theme { margin-left: auto; background: var(--panel); color: var(--text); border: 1px solid var(--border);
          border-radius: 6px; padding: 3px 10px; font: inherit; cursor: pointer; }
@@ -39,7 +39,7 @@ svg { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visib
 path.edge { fill: none; stroke: var(--c); stroke-width: 1.2; opacity: .45; }
 .mark { position: absolute; height: 22px; border: 1.5px solid var(--c); border-radius: 4px;
         background: color-mix(in srgb, var(--c) 10%, transparent); cursor: pointer; }
-.cls { --c: var(--cls); } .class_attrs { --c: var(--classattr); } .instance_attrs { --c: var(--instattr); }
+.cls { --c: var(--cls); } .class_attrs { --c: var(--classattr); } .instance_attrs { --c: var(--instattr); } .bases { --c: var(--base); }
 #rows { position: absolute; display: flex; flex-direction: column; gap: 12px; width: 380px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .card h2 { font: 600 13px ui-monospace, Menlo, monospace; margin: 0 0 8px; display: inline-block; }
@@ -61,6 +61,7 @@ path.edge.on { opacity: 1; stroke-width: 2; }
     <span style="--c: var(--cls)">class (row)</span>
     <span style="--c: var(--classattr)">class_attrs</span>
     <span style="--c: var(--instattr)">instance_attrs</span>
+    <span style="--c: var(--base)">bases, metaclass</span>
 </div>
 <button id="theme" type="button"></button>
 </header>
@@ -154,7 +155,26 @@ for (const row of data.rows) {
             card.appendChild(line);
         }
     }
-    card.appendChild(el("div", "field", `bases ${row.bases.length ? JSON.stringify(row.bases) : "(not written yet)"}`));
+    card.appendChild(el("div", "field", "bases"));
+    if (!row.bases.length) card.appendChild(el("div", "empty", "none"));
+    const baseLine = el("div", "member");
+    for (const base of row.bases) {
+        if (!base) { baseLine.appendChild(el("span", "chip bases", "unknown")); continue; }   // not a name: make_base()
+        const [key, label] = base;
+        const chip = el("span", "chip bases", `${label} ${key[0]}:${key[1]}`);
+        baseLine.appendChild(chip);
+        links.push({ card, chip, mark: mark(key, label, "bases"), cls: "bases" });
+    }
+    card.appendChild(baseLine);
+    card.appendChild(el("div", "field", "metaclass"));
+    if (!row.metaclass) card.appendChild(el("div", "empty", "none"));
+    else {
+        const [key, label] = row.metaclass, metaLine = el("div", "member");
+        const chip = el("span", "chip bases", `${label} ${key[0]}:${key[1]}`);
+        metaLine.appendChild(chip);
+        links.push({ card, chip, mark: mark(key, label, "bases"), cls: "bases" });
+        card.appendChild(metaLine);
+    }
     rows.appendChild(card);
 }
 

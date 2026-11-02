@@ -11,7 +11,8 @@ class GlobalNamespaceTable:
           (path,)                                                 the module: its globals at the Exit, in class_attrs
     Row:  class_attrs     {name: [key, ...]}   cls.x in a classmethod
           instance_attrs  {name: [key, ...]}   self.x in an instance method
-          bases           [key, ...]           base read keys, in order (not yet)
+          bases           [key | None, ...]    each base's read key, in order; None: not a name (make_base()), so the MRO is unknown past it
+          metaclass       key | None           metaclass=M's read key; None: not given, so the bases' metaclass, else type
 
     - Created on each class push; replaced on re-push (loop pass, rebuild), like CPython.
     - Receiver = the method's first param. Static methods and nested functions write nothing.
@@ -23,8 +24,8 @@ class GlobalNamespaceTable:
     def __init__(self) -> None:
         self.table: dict[NamespaceKey, dict] = {}
 
-    def create_entry(self, key: NamespaceKey) -> None:
-        self.table[key] = {"class_attrs": {}, "instance_attrs": {}, "bases": []}
+    def create_entry(self, key: NamespaceKey, bases: list[Key | None] | None = None, metaclass: Key | None = None) -> None:
+        self.table[key] = {"class_attrs": {}, "instance_attrs": {}, "bases": bases or [], "metaclass": metaclass}
 
     def add_attribute(self, 
         receiver_key: NamespaceKey, 
@@ -46,6 +47,7 @@ class GlobalNamespaceTable:
                 members = "   ".join(f"{name}: {' '.join(map(str, keys))}" for name, keys in row[field].items())
                 print(f"    {field:<15} {members}")
             print(f"    {'bases':<15} {row['bases']}")
+            print(f"    {'metaclass':<15} {row['metaclass']}")
 
 def visualise_table(table: GlobalNamespaceTable, builder, path: str | None = None) -> str:
     """
@@ -58,7 +60,9 @@ def visualise_table(table: GlobalNamespaceTable, builder, path: str | None = Non
     rows = [{"qualname": ".".join(f"{name}[{line},{col}]" for name, (line, col) in row_key[1:]) or "module",
              "label": None if row_key == module else row_key[-1][0],
              "site": None if row_key == module else list(row_key[-1][1]),
-             "class_attrs": row["class_attrs"], "instance_attrs": row["instance_attrs"], "bases": row["bases"]}
+             "class_attrs": row["class_attrs"], "instance_attrs": row["instance_attrs"],
+             "bases": [base and [base, builder.provenance_table[base].symbol.rsplit(".", 1)[-1]] for base in row["bases"]],
+             "metaclass": row["metaclass"] and [row["metaclass"], builder.provenance_table[row["metaclass"]].symbol.rsplit(".", 1)[-1]]}
             for row_key, row in table.table.items() if row_key[0] == builder.filepath]
     data = {"file": builder.filepath, "lines": builder.source_lines, "rows": rows}
 
