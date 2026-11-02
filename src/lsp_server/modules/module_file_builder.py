@@ -305,7 +305,7 @@ class ModuleFileBuilder():
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ def f(a: T, b=e)                │ the CFG binds each param at the start of the body: def a (recipe ParameterOf, origin PARAMETER), keyed at       │
         │                                 │ the name. Annotated → resolved T; else a literal default → its type; else a name default → parent: its          │
-        │                                 │ read on the def line. A method's unannotated receiver → resolved: self Self@A, cls type[A]                      │
+        │                                 │ read on the def line. A method's unannotated receiver → resolved: self Self@A, cls type[Self@A]                 │
         └─────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
         Control flow (from the CFG's entry nodes)
@@ -421,8 +421,8 @@ class ModuleFileBuilder():
                 if arg.annotation is not None:
                     entry.type, entry.resolved = LatticeValue.of(ast.unparse(arg.annotation)), True
                 elif name == scope.receiver:
-                    # a method's receiver: self is Self@A (an A, or the subclass it was called on), cls is type[A]
-                    kind = "self" if scope.scope_type == ScopeType.INSTANCE_METHOD else "type"
+                    # a method's receiver: self is Self@A, cls is type[Self@A] (A, or the subclass it was called on)
+                    kind = "self" if scope.scope_type == ScopeType.INSTANCE_METHOD else "type_self"
                     entry.type, entry.resolved = LatticeValue.of((kind, scope.export_namespace_key)), True
                 elif isinstance(default, ast.Constant):
                     entry.type, entry.resolved = LatticeValue.of(type(default.value).__name__), True

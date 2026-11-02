@@ -126,7 +126,7 @@ code.style.cssText = `left:${codeX}px;top:${PAD}px`;
 const byId = new Map(data.nodes.map(n => [n.id, n]));
 const children = new Map(data.nodes.map(n => [n.id, []]));
 const maxLen = Math.max(20, ...data.lines.map(l => l.length));
-const extX = codeX + (maxLen + 10) * CW;
+const extX = codeX + (Math.min(maxLen, 80) + 4) * CW;   // capped, so one long line doesn't push the column off screen
 let row = 0;
 for (const n of data.nodes) {
 if (n.pos) {
