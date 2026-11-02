@@ -5,6 +5,7 @@ c = a + b                    # c <- a, b
 d = c * a                    #  d <- c, a  (a is shared: a diamond)
 e = d - c + b                 # e <- d, c, b
 pair = [e, b]                 # list, still traced through its elements
+x = len(a)
 
 name = "rune"
 suffix = "!"

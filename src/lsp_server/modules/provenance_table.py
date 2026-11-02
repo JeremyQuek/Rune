@@ -1,6 +1,7 @@
 import ast
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import Literal
 
 from lexical_environment import Key
 from type_lattice import LatticeValue
@@ -57,6 +58,6 @@ class TableEntry():
     parents: list[Key] = field(default_factory=list)   # keys, not entries, so re-analysis leaves no stale refs
     origin: Origin = Origin.NORMAL
     return_stmts: list[Key] | None = None              # function definitions only: keys of its return entries
-
+    side: Literal["lhs", "rhs"] = "lhs"                # lhs: a write of symbol (a definition), rhs: a read of it
 
 ProvenanceTable = dict[Key, TableEntry]

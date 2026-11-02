@@ -19,8 +19,9 @@ class ModuleFileBuilder():
 
     MAX_LOOP_PASSES = 10   
 
-    def __init__(self, filepath: str, global_namespace_table: GlobalNamespaceTable) -> None:
-        self.filepath = filepath
+    def __init__(self, filepath: str, source_code: str, global_namespace_table: GlobalNamespaceTable) -> None:
+        self.filepath = filepath   # identity only: the module's namespace key and error messages; the text comes from source_code
+        self.source_code = source_code
         self.global_namespace_table = global_namespace_table
 
         self.source_lines: list[str] = []
@@ -30,9 +31,8 @@ class ModuleFileBuilder():
 
 
     def build(self) -> ProvenanceTable:
-        with open(self.filepath, "r", encoding="utf-8") as f:
-            source_code = f.read()
-            module_ast = ast.parse(source_code, filename=self.filepath)
+        source_code = self.source_code   # the editor's buffer, which may be unsaved: never read from disk here
+        module_ast = ast.parse(source_code, filename=self.filepath)
         self.source_lines = source_code.splitlines()
 
         self.env = Environment(source_code, self.filepath)   # symtable parses the source text; the path is for error messages and the module's namespace key
@@ -232,9 +232,9 @@ class ModuleFileBuilder():
         ├──────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ Order                    │ reads (RHS) first, then definitions (LHS) + env.assign. Order trap: in x = x + 1 the RHS x is the old x                │
         ├──────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-        │ Use entry                │ expr = itself. A name's parent is which(x).key; an attribute link's parent is described under ATTRIBUTES               │
+        │ Use entry                │ expr = itself, side = "rhs". A name's parent is which(x).key; an attribute link's parent is under ATTRIBUTES           │
         ├──────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-        │ Definition entry         │ expr = the RHS (the recipe), parents = that statement's read keys                                                      │
+        │ Definition entry         │ expr = the RHS (the recipe), parents = that statement's read keys, side = "lhs" (the default)                          │
         ├──────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ Keys                     │ (line, col) of the name itself, so the hover finds it. Attribute links are keyed at the attribute's name (b in a.b).   │
         │                          │ Only builtins have non-positional keys ("builtins", name), because they don't appear in the source                     │
@@ -762,7 +762,7 @@ class ModuleFileBuilder():
                 return None
 
     def _use(self, symbol: str, key: Key, node: ast.AST, parent: Key | None) -> Key:
-        self.provenance_table[key] = TableEntry(symbol, node, parents=[parent] if parent else [])
+        self.provenance_table[key] = TableEntry(symbol, node, parents=[parent] if parent else [], side="rhs")
         return key
 
     def _key(self, node: ast.AST) -> Key:
@@ -861,7 +861,9 @@ def visualize_file(analyzer: ModuleFileBuilder, path: str | None = None) -> str:
 
 if __name__=="__main__":
     x= GlobalNamespaceTable()
-    module_file_builder = ModuleFileBuilder("/Users/jeremyquek/Desktop/rune/tests/unit_test/global_namespace_table/testcases/classes.py", x) 
+    filepath = "/Users/jeremyquek/Desktop/rune/tests/unit_test/global_namespace_table/testcases/classes.py"
+    with open(filepath, encoding="utf-8") as f:
+        module_file_builder = ModuleFileBuilder(filepath, f.read(), x)
     module_file_builder.build()
 
     visualize_file(module_file_builder)

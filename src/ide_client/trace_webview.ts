@@ -255,7 +255,7 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, graph: Trac
     }
     #tip .label { margin-bottom: 4px; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
     #tip .row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 3px 0; }
-    #tip .row code { font-family: var(--vscode-editor-font-family, monospace); }
+    #tip .row code { font-family: var(--vscode-editor-font-family, monospace); justify-self: start; }   /* hug the name, not the 1fr column */
     #tip .where { min-width: 52px; color: var(--muted); text-align: right; }
     #tip .empty { color: var(--muted); }
     #tip .result {
@@ -455,6 +455,16 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, graph: Trac
     const fileIndexOf = (el) => (el.id.match(/(?:^|-)f(\\d+)$/) || [])[1];
 
     // ----- node hover: operands ----- //
+    // a node with no operands says where its type comes from instead (node.source, from the engine)
+    const SOURCE_TEXT = {
+      literal: 'Type is a literal',
+      annotation: 'Type comes from the annotation',
+      builtin: 'Type is a builtin',
+      definition: 'Type is the definition itself',
+      parameter: 'Type comes from the parameter',
+      import: 'Type comes from the import',
+      unresolved: 'Type is unresolved',
+    };
     function tipHtml(node) {
       const rows = node.operands.map((op) =>
         '<div class="row"><code>' + esc(op.name) + '</code>' +
@@ -462,8 +472,8 @@ function renderHtml(webview: vscode.Webview, mermaidUri: vscode.Uri, graph: Trac
         '<span class="where">' + (op.line != null ? 'line ' + op.line : op.type === 'Unknown' ? 'unresolved' : 'literal') + '</span></div>'
       ).join('');
       return '<div class="head">' + esc(node.code) + '</div>' +
-        '<div class="label">operands</div>' +
-        (rows || '<div class="empty">none: the type comes from the annotation</div>') +
+        (rows ? '<div class="label">operands</div>' + rows
+              : '<div class="empty">' + esc(SOURCE_TEXT[node.source] || SOURCE_TEXT.unresolved) + '</div>') +
         '<div class="result"><span>result</span><span class="type">' + esc(node.type) + '</span></div>';
     }
 

@@ -17,6 +17,7 @@ export type TraceNode = {
   line: number;
   type: string;
   file: string;          // uri of the file the entry is in
+  source?: string | null; // no operands: where the type comes from ("literal", "builtin", ...)
   operands: Operand[];   // names and literals the rhs is built from
 };
 export type TraceGraph = {

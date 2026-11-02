@@ -81,7 +81,8 @@ if __name__=="__main__":
 
     table = GlobalNamespaceTable()
     filepath= "/Users/jeremyquek/Desktop/rune/tests/unit_test/global_namespace_table/testcases/classes.py"
-    module_file_builder = ModuleFileBuilder(filepath, table)
+    with open(filepath, encoding="utf-8") as f:
+        module_file_builder = ModuleFileBuilder(filepath, f.read(), table)
     module_file_builder.build()
     table._pretty_print()
     visualise_table(table, module_file_builder)

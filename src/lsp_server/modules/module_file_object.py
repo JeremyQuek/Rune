@@ -99,13 +99,20 @@ class Request():
 class ModuleFileObject():
     """
     One file: builds its provenance table, then answers get_type(key) lazily, caching every type it resolves.
+    Public surface (the engine reads nothing else):
+        get_type(key)      the type at key
+        key_at(line, col)  the positional key whose name covers the cursor (ast coordinates), or None
+        parents(key)       the keys key's type was derived from
+        symbol(key)        the name written at key ("x", "self.x")
+        side(key)          "lhs" if key writes its symbol, "rhs" if it reads it
+        source(key)        where a type with no parents comes from: "literal", "annotation", "builtin", ...
     """
     MAX_CYCLE_PASSES = 10
 
-    def __init__(self, filepath: str, global_namespace_table: GlobalNamespaceTable):
+    def __init__(self, filepath: str, source_code: str, global_namespace_table: GlobalNamespaceTable):
         self.filepath: str = filepath
         self.global_namespace_table: GlobalNamespaceTable= global_namespace_table
-        self.table: ProvenanceTable = ModuleFileBuilder(filepath, global_namespace_table).build()
+        self.table: ProvenanceTable = ModuleFileBuilder(filepath, source_code, global_namespace_table).build()
         self.expr_evaluator:ExpressionEvaluatorMock = ExpressionEvaluatorMock
 
     def get_type(self, key: Key) -> LatticeValue:
@@ -125,6 +132,54 @@ class ModuleFileObject():
                     break
             else:
                 return self.table[key].type
+
+    def key_at(self, line: int, col: int) -> Key | None:
+        """
+        The key under the cursor. Positional keys sit where a name starts (an attribute's, at the attribute), so
+        any key on the line whose last name segment spans col matches; the rightmost wins when spans overlap.
+        """
+        hits = [key for key, entry in self.table.items()
+                if len(key) == 2 and all(isinstance(n, int) for n in key)
+                and key[0] == line and key[1] <= col < key[1] + len(entry.symbol.rsplit(".", 1)[-1])]
+        return max(hits, default=None)
+
+    def parents(self, key: Key) -> list[Key]:
+        """The keys key's type is derived from, in the table: what a trace walks."""
+        return [p for p in self.table[key].parents if p in self.table] if key in self.table else []
+
+    def symbol(self, key: Key) -> str:
+        return self.table[key].symbol if key in self.table else ""
+
+    def side(self, key: Key) -> str:
+        return self.table[key].side if key in self.table else "lhs"
+
+    def source(self, key: Key) -> str:
+        """
+        Where key's type comes from when no parent explains it, for the trace's leaves:
+            builtin      ("builtins", name)
+            parameter    a parameter (its annotation, receiver or default decides the type)
+            import       a module or a name imported from one
+            definition   def f / class A: the definition is its own type
+            annotation   x: int with no value
+            literal      a recipe with no names in it: 1, "s", [1, 2]
+            unresolved   anything else: a name with no definition, a lookup nothing answers yet
+        """
+        entry = self.table.get(key)
+        if entry is None:
+            return "unresolved"
+        if key[0] == "builtins":
+            return "builtin"
+        if entry.origin == Origin.PARAMETER:
+            return "parameter"
+        if entry.origin == Origin.IMPORT:
+            return "import"
+        if isinstance(entry.expr, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return "definition"
+        if entry.expr is None and entry.resolved:
+            return "annotation"
+        if entry.expr is not None and not any(isinstance(n, (ast.Name, ast.Attribute)) for n in ast.walk(entry.expr)):
+            return "literal"
+        return "unresolved"
 
     def _run_tarjan(self, root: Key) -> Iterator[list[Key]]:
         """
