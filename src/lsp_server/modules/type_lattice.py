@@ -39,7 +39,6 @@ UNBOUND = "Unbound"
 ClassRef = tuple[str, NamespaceKey]   # ("type", key), ("instance", key), ("self", key) or ("type_self", key)
 Type = str | ClassRef
 
-
 def display(t: Type) -> str:
     """A type as hover shows it: ("type", key) -> type[A], ("instance", key) -> A, ("self", key) -> Self@A,
     ("type_self", key) -> type[Self@A], a name as is."""

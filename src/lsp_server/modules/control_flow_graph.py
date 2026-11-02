@@ -35,12 +35,12 @@ class Node():
     """
     A control flow node stores a logical piece of source code
     """
+    node_id: int = field(default=0, kw_only=True)   # stable per CFG (the module entry is 0): join keys ("join", node_id, x) and the viewers
     node_type: NodeType
     ast_node: ast.AST | None = None
     # Incoming environment is keyed by predecessor to avoid stale copies from loop back edges.
     incoming_environments: dict["Node | None", "Environment"] = field(default_factory=dict)   # predecessor -> its env (None for a root), joined when visited
     enviroment: "Environment | None" = None
-    node_id: int = 0   # stable per CFG (the module entry is 0): join keys ("join", node_id, x) and the viewers
 
     def __repr__(self) -> str:
         return self.node_type.name
