@@ -33,3 +33,8 @@ if A:
     class B: pass                   # two rows: same name, different sites
 else:
     class B: pass
+
+
+class Meta(type):
+    def tag(cls):
+        cls.tagged = True           # instance tagged on Meta's row: an unmarked method, so cls is an instance of Meta (a class)

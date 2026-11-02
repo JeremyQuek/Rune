@@ -305,7 +305,7 @@ class ModuleFileBuilder():
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ def f(a: T, b=e)                │ the CFG binds each param at the start of the body: def a (recipe ParameterOf, origin PARAMETER), keyed at       │
         │                                 │ the name. Annotated → resolved T; else a literal default → its type; else a name default → parent: its          │
-        │                                 │ read on the def line                                                                                            │
+        │                                 │ read on the def line. A method's unannotated receiver → resolved: self Self@A, cls type[A]                      │
         └─────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
         Control flow (from the CFG's entry nodes)
@@ -415,10 +415,15 @@ class ModuleFileBuilder():
                 self._bind(defn.name, key, TableEntry(defn.name, defn, parents=parents))
 
             case ast.Assign(targets=[ast.Name(id=name) as target], value=ParameterOf(arg=arg, default=default) as param):
-                # a parameter, bound at the start of the body: the annotation wins, else the default decides
+                # a parameter, bound at the start of the body: the annotation wins, then a method's receiver, else the default decides
                 entry = TableEntry(name, param, origin=Origin.PARAMETER)
+                scope = self.env.scopes[-1]
                 if arg.annotation is not None:
                     entry.type, entry.resolved = LatticeValue.of(ast.unparse(arg.annotation)), True
+                elif name == scope.receiver:
+                    # a method's receiver: self is Self@A (an A, or the subclass it was called on), cls is type[A]
+                    kind = "self" if scope.scope_type == ScopeType.INSTANCE_METHOD else "type"
+                    entry.type, entry.resolved = LatticeValue.of((kind, scope.export_namespace_key)), True
                 elif isinstance(default, ast.Constant):
                     entry.type, entry.resolved = LatticeValue.of(type(default.value).__name__), True
                 elif isinstance(default, (ast.Name, ast.Attribute)):
@@ -845,7 +850,7 @@ def visualize_file(analyzer: ModuleFileBuilder, path: str | None = None) -> str:
 
 if __name__=="__main__":
     x= GlobalNamespaceTable()
-    module_file_builder = ModuleFileBuilder("/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/class.py", x) 
+    module_file_builder = ModuleFileBuilder("/Users/jeremyquek/Desktop/rune/tests/unit_test/global_namespace_table/testcases/classes.py", x) 
     module_file_builder.process_file()
 
     visualize_file(module_file_builder)

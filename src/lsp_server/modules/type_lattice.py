@@ -9,6 +9,7 @@ A LatticeValue is a set of type names:
     Any          -> {"Any"}          top, could be anything
     type[A]      -> {("type", key)}      the class object A, key = its global namespace table row
     A            -> {("instance", key)}  an instance of A
+    Self@A       -> {("self", key)}      self in A's methods: an A, or the subclass the method was called on
 
 A class is a ClassRef rather than a name, so the type carries its row: two classes named A
 (if: class A … else: class A …) stay two members of a union, and display() shows both as A.
@@ -34,17 +35,17 @@ MAX_UNION_SIZE = 5
 ANY = "Any"
 UNBOUND = "Unbound"
 
-ClassRef = tuple[str, NamespaceKey]   # ("type", key) or ("instance", key)
+ClassRef = tuple[str, NamespaceKey]   # ("type", key), ("instance", key) or ("self", key)
 Type = str | ClassRef
 
 
 def display(t: Type) -> str:
-    """A type as hover shows it: ("type", key) -> type[A], ("instance", key) -> A, a name as is."""
+    """A type as hover shows it: ("type", key) -> type[A], ("instance", key) -> A, ("self", key) -> Self@A, a name as is."""
     if isinstance(t, str):
         return t
     kind, key = t
     name = key[-1][0]
-    return f"type[{name}]" if kind == "type" else name
+    return {"type": f"type[{name}]", "self": f"Self@{name}"}.get(kind, name)
 
 class LatticeValue():
     def __init__(self, types: Iterable[Type] = ()) -> None:
