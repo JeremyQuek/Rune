@@ -8,6 +8,7 @@ class GlobalNamespaceTable:
     One row per class, keyed by where it's defined. Holds definition keys, never types.
 
     Key:  (path, (Outer, (line, col)), (Inner, (line, col)))      functions skipped
+          (path,)                                                 the module: its globals at the Exit, in class_attrs
     Row:  class_attrs     {name: [key, ...]}   cls.x in a classmethod
           instance_attrs  {name: [key, ...]}   self.x in an instance method
           bases           [key, ...]           base read keys, in order (not yet)
@@ -40,7 +41,7 @@ class GlobalNamespaceTable:
     def _pretty_print(self) -> None:
         """Each row as Outer[line,col].Inner[line,col], then its members and the keys written to them."""
         for row_key, row in self.table.items():
-            print(".".join(f"{name}[{line},{col}]" for name, (line, col) in row_key[1:]))
+            print(".".join(f"{name}[{line},{col}]" for name, (line, col) in row_key[1:]) or f"module {row_key[0]}")
             for field in ("class_attrs", "instance_attrs"):
                 members = "   ".join(f"{name}: {' '.join(map(str, keys))}" for name, keys in row[field].items())
                 print(f"    {field:<15} {members}")
@@ -53,8 +54,10 @@ def visualise_table(table: GlobalNamespaceTable, builder, path: str | None = Non
     """
     import html, json, pathlib, tempfile, webbrowser
 
-    rows = [{"qualname": ".".join(f"{name}[{line},{col}]" for name, (line, col) in row_key[1:]),
-             "label": row_key[-1][0], "site": list(row_key[-1][1]),
+    module = (builder.filepath,)
+    rows = [{"qualname": ".".join(f"{name}[{line},{col}]" for name, (line, col) in row_key[1:]) or "module",
+             "label": None if row_key == module else row_key[-1][0],
+             "site": None if row_key == module else list(row_key[-1][1]),
              "class_attrs": row["class_attrs"], "instance_attrs": row["instance_attrs"], "bases": row["bases"]}
             for row_key, row in table.table.items() if row_key[0] == builder.filepath]
     data = {"file": builder.filepath, "lines": builder.source_lines, "rows": rows}

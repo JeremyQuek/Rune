@@ -48,6 +48,24 @@ class ModuleFileBuilder():
         # self.cfg._pretty_print()
         self._traverse_graph()
         self._join_elimintaion()
+        self._export_globals()
+
+    def _export_globals(self) -> None:
+        """
+        The module's row, keyed (path,): its global scope at the module Exit, under class_attrs, since `import m`
+        gives the module object, not an instance of it. Plain names only: a chain (a.b) belongs to a's type, and
+        builtins live outside the scope stack. A name defined in several branches arrives as one join key.
+        No Exit environment (the module always raises before it): an empty row, as the import would fail.
+        """
+        module_key = (self.filepath,)
+        self.global_namespace_table.create_entry(module_key)
+        exit_node = next((u for u in self.cfg.nodes.values()
+                          if isinstance(u.ast_node, Exit) and u.ast_node.kind == ExitKind.MODULE), None)
+        if exit_node is None or exit_node.enviroment is None:
+            return
+        for name, entry in exit_node.enviroment.scopes[0].table.items():
+            if "." not in name:
+                self.global_namespace_table.add_attribute(module_key, name, "class", entry.key)
 
     def _traverse_graph(self):
         """
@@ -346,8 +364,8 @@ class ModuleFileBuilder():
             needs the importing file.
           - Class Exit: the class body's {member: key} + bases → GlobalNamespaceTable, row
             keyed by the class's definition key. Needs push_scope/pop_scope for the body.
-          - Module Exit: the global scope {name: key} → GlobalNamespaceTable, row keyed by
-            the module name.
+          - Module Exit: the global scope {name: key} → GlobalNamespaceTable class_attrs, row keyed by
+            (path,) (_export_globals).
           - Function bodies: return_stmts on the def entry, and a free name with no binding at the def
             linked to its binding at the module exit (late binding).
           - Loops: the CFG has back edges, so the Kahn walk stalls at a loop; it needs the SCC

@@ -137,7 +137,7 @@ for (const row of data.rows) {
     const card = el("div", "card");
     const head = el("h2", "chip cls", row.qualname);
     card.appendChild(head);
-    links.push({ card, chip: head, mark: mark(row.site, row.label, "cls"), cls: "cls" });
+    if (row.site) links.push({ card, chip: head, mark: mark(row.site, row.label, "cls"), cls: "cls" });   // the module row has no site
     for (const field of ["class_attrs", "instance_attrs"]) {
         card.appendChild(el("div", "field", field));
         const members = Object.entries(row[field]);
@@ -146,9 +146,10 @@ for (const row of data.rows) {
             const line = el("div", "member");
             line.appendChild(el("span", null, name));
             for (const key of keys) {
-                const chip = el("span", `chip ${field}`, `${key[0]}:${key[1]}`);
+                const positional = key.length === 2 && key.every(Number.isInteger);
+                const chip = el("span", `chip ${field}`, positional ? `${key[0]}:${key[1]}` : key.join(" "));
                 line.appendChild(chip);
-                links.push({ card, chip, mark: mark(key, name, field), cls: field });
+                if (positional) links.push({ card, chip, mark: mark(key, name, field), cls: field });   // a join has no position
             }
             card.appendChild(line);
         }
