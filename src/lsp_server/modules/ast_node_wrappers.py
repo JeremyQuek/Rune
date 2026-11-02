@@ -86,6 +86,7 @@ class ExitKind(Enum):
     FINALLY = auto()
     MATCH = auto()
     CASE = auto()
+    RAISE = auto()   # the module's exceptional exit: where uncaught raises go, kept apart from the normal Exit
 
 class Exit(ast.AST):
     def __init__(self, kind: ExitKind) -> None:

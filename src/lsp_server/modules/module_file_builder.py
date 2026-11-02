@@ -55,15 +55,17 @@ class ModuleFileBuilder():
         The module's row, keyed (path,): its global scope at the module Exit, under class_attrs, since `import m`
         gives the module object, not an instance of it. Plain names only: a chain (a.b) belongs to a's type, and
         builtins live outside the scope stack. A name defined in several branches arrives as one join key.
-        No Exit environment (the module always raises before it): an empty row, as the import would fail.
+        Raise paths never reach the normal Exit (they go to ExitKind.RAISE). Only when the normal Exit is
+        unreachable (the module always raises) are the names bound before the raise exported, like Pyright.
         """
         module_key = (self.filepath,)
         self.global_namespace_table.create_entry(module_key)
-        exit_node = next((u for u in self.cfg.nodes.values()
-                          if isinstance(u.ast_node, Exit) and u.ast_node.kind == ExitKind.MODULE), None)
-        if exit_node is None or exit_node.enviroment is None:
+        exits = {u.ast_node.kind: u.enviroment for u in self.cfg.nodes.values()
+                 if isinstance(u.ast_node, Exit) and u.ast_node.kind in (ExitKind.MODULE, ExitKind.RAISE)}
+        env = exits.get(ExitKind.MODULE) or exits.get(ExitKind.RAISE)
+        if env is None:
             return
-        for name, entry in exit_node.enviroment.scopes[0].table.items():
+        for name, entry in env.scopes[0].table.items():
             if "." not in name:
                 self.global_namespace_table.add_attribute(module_key, name, "class", entry.key)
 
@@ -125,6 +127,9 @@ class ModuleFileBuilder():
         #  Any read inside the loop of a name the loop also writes should be see either the pre-loop value or the value from the previous iteration.
         # Combine incoming envs such as on join branches
         incoming = list(u.incoming_environments.values())
+        if isinstance(u.ast_node, Exit) and u.ast_node.kind == ExitKind.RAISE:
+            # a raise in a class body arrives with the class scope still pushed: only the module scope matters here
+            incoming = [self._module_scope_only(env) for env in incoming]
         u.enviroment = join(incoming, lambda x, keys: self._join_entry(node_id, x, keys))
         if keep_incoming and any(u.enviroment is env for env in incoming):
             u.enviroment = u.enviroment.clone()
@@ -172,6 +177,13 @@ class ModuleFileBuilder():
         for key, leaves in flat.items():   # assigned after, so every join is flattened from the settled table
             table[key].parents = leaves
 
+
+    def _module_scope_only(self, env: Environment) -> Environment:
+        if len(env.scopes) == 1:
+            return env
+        env = env.clone()
+        env.scopes = env.scopes[:1]
+        return env
 
     def _deliver(self, u: Node, v: Node) -> None:
         # Share a ref of the env to a single child else clone the env to all children

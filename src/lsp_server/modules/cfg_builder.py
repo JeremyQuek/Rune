@@ -49,6 +49,7 @@ class CFGBuilder():
         self.cfg = cfg
         self.ast = ast
         self.scope_stack: list[ScopeContextManager] = []
+        self.raise_exit = ast_node_wrappers.Exit(ast_node_wrappers.ExitKind.RAISE)   # uncaught raises at module level
 
     def make_graph(self) -> None:
         self._dfs(self.ast, ast_node_wrappers.ModuleEntry())
@@ -174,6 +175,10 @@ class CFGBuilder():
         Separately, if any raise reached a finally, that finally's tails are passed
         through here too, so the exception continues outward once the finally has run.
         The walk always stops at a function boundary.
+
+        A walk that runs off the top (no finally, no function) may be uncaught, so it also goes
+        to the module's exceptional exit (ExitKind.RAISE), never the normal Exit: a module that
+        raised never finishes importing, so its raise paths must not feed what importers see.
         """
         for i in range(len(self.scope_stack)-1, -1, -1):
             # Stop at the function boundary: a function body's raise propagates to its
@@ -190,6 +195,8 @@ class CFGBuilder():
                     self.cfg.insert(node, try_catch_context.finally_entry)
                     try_catch_context.raise_reaches_finally = True
                     break
+        else:
+            self.cfg.insert(node, self.raise_exit)
 
     def _link_jump(self, node: ast.AST, kind: type[ast_node_wrappers.Body]) -> None:
         """

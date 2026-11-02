@@ -22,7 +22,7 @@ class A:
         self.gone = 1               # skipped: receiver rebound
 
 
-class Outer:
+class Outer(A):
     def f(self):
         class Inner:                # Outer.Inner: the method f is skipped in the key
             def g(self):
