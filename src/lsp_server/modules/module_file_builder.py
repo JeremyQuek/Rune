@@ -21,16 +21,15 @@ class ModuleFileBuilder():
 
     def __init__(self, filepath: str, global_namespace_table: GlobalNamespaceTable) -> None:
         self.filepath = filepath
-        self.env: Environment | None = None   # built in process_file, once the source is read
-        self.provenance_table: ProvenanceTable = {}   # Key -> TableEntry
-
-        self.import_table: dict = {}
-
-        self.cfg: ControlFlowGraph | None = None
-        self.source_lines: list[str] = []
         self.global_namespace_table = global_namespace_table
 
-    def process_file(self) -> None:
+        self.source_lines: list[str] = []
+        self.cfg: ControlFlowGraph | None = None
+        self.env: Environment | None = None   # built in build, once the source is read
+        self.provenance_table: ProvenanceTable = {}   # Key -> TableEntry
+
+
+    def build(self) -> ProvenanceTable:
         with open(self.filepath, "r", encoding="utf-8") as f:
             source_code = f.read()
             module_ast = ast.parse(source_code, filename=self.filepath)
@@ -45,10 +44,10 @@ class ModuleFileBuilder():
                                                                     parents=[builtins_module])
 
         self.cfg = ControlFlowGraph(module_ast)
-        # self.cfg._pretty_print()
-        self._traverse_graph()
-        self._join_elimintaion()
+        self._traverse_cfg()
+        self._eliminate_joins()
         self._export_globals()
+        return self.provenance_table
 
     def _export_globals(self) -> None:
         """
@@ -69,7 +68,7 @@ class ModuleFileBuilder():
             if "." not in name:
                 self.global_namespace_table.add_attribute(module_key, name, "class", entry.key)
 
-    def _traverse_graph(self):
+    def _traverse_cfg(self):
         """
         Topological Traversal using Kahn's Algorithm, over the condensed graph: a plain node is
         visited once, a loop SCC is run to a fixed point. Either way its out edges deliver once it is done.
@@ -120,8 +119,7 @@ class ModuleFileBuilder():
         keep_incoming (a loop's entry): the outside arm is delivered once and must stay as it was for
         every pass, so if the join handed back a delivered env as is, the node works on a clone of it.
         """
-        # Get the ID of the node
-        node_id = self.cfg._node_ids[id(u)]
+        node_id = u.node_id
 
         #  We do not clear the previous environment on join inside loops. This is because of loop carried dependency behaviour:
         #  Any read inside the loop of a name the loop also writes should be see either the pre-loop value or the value from the previous iteration.
@@ -155,7 +153,7 @@ class ModuleFileBuilder():
             entry = self.provenance_table[site]
             entry.type, entry.resolved = LatticeValue.of(("type", scope.export_namespace_key)), True
 
-    def _join_elimintaion(self)->None:
+    def _eliminate_joins(self)->None:
         """
         Post-processing, once every loop has settled: a JOIN entry's parents become the non-join keys
         reachable through other joins, so a join is one layer deep. Union is associative, so no type
@@ -864,6 +862,6 @@ def visualize_file(analyzer: ModuleFileBuilder, path: str | None = None) -> str:
 if __name__=="__main__":
     x= GlobalNamespaceTable()
     module_file_builder = ModuleFileBuilder("/Users/jeremyquek/Desktop/rune/tests/unit_test/global_namespace_table/testcases/classes.py", x) 
-    module_file_builder.process_file()
+    module_file_builder.build()
 
     visualize_file(module_file_builder)

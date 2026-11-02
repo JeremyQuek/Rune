@@ -40,6 +40,7 @@ class Node():
     # Incoming environment is keyed by predecessor to avoid stale copies from loop back edges.
     incoming_environments: dict["Node | None", "Environment"] = field(default_factory=dict)   # predecessor -> its env (None for a root), joined when visited
     enviroment: "Environment | None" = None
+    node_id: int = 0   # stable per CFG (the module entry is 0): join keys ("join", node_id, x) and the viewers
 
     def __repr__(self) -> str:
         return self.node_type.name
@@ -98,9 +99,7 @@ class ControlFlowGraph():
         self.edges: list[list[Node]] = []
         self.adj: defaultdict[Node, list[Node]] = defaultdict(list)
 
-        # For pretty print
-        self._id_counter = 0
-        self._node_ids: dict[int, int] = {id(self.entry): 0}
+        self._id_counter = 0   # the last node_id handed out; the module entry is 0
 
         # first node of each function body -> its def, so the walk knows where to push the function's scope
         self.function_bodies: dict[Node, ast.FunctionDef | ast.AsyncFunctionDef] = {}
@@ -130,12 +129,8 @@ class ControlFlowGraph():
     # returns a Node of the correct type
     def _create_node(self, ast_node: ast.AST) -> Node:
         node_type = self.mapping[type(ast_node)]
-        node = Node(node_type, ast_node=ast_node)
-
-        # For pretty print
         self._id_counter += 1
-        self._node_ids[id(node)] = self._id_counter
-        return node
+        return Node(node_type, ast_node=ast_node, node_id=self._id_counter)
     
     """
     Prints the edge list in a format pasteable into 
@@ -147,7 +142,7 @@ class ControlFlowGraph():
             print(f"{self._label(u)}-{self._label(v)}")
 
     def _label(self, node: Node) -> str:
-        nid = self._node_ids[id(node)]
+        nid = node.node_id
         if node.ast_node is None:
             return f"Entry({nid})"
         if node.node_type == NodeType.EXIT:
@@ -255,14 +250,14 @@ def visualize_graph(cfg: ControlFlowGraph, source: str | None = None, name: str 
 
     used = {n for edge in cfg.edges for n in edge}
     nodes = [{
-        "id": cfg._node_ids[id(n)],
+        "id": n.node_id,
         "label": cfg._label(n),
         "kind": category(n),
         "type": type(n.ast_node).__name__ if n.ast_node is not None else "Entry",
         "span": span(n),
         "code": code(n),
     } for n in used]
-    edges = [[cfg._node_ids[id(u)], cfg._node_ids[id(v)]] for u, v in cfg.edges]
+    edges = [[u.node_id, v.node_id] for u, v in cfg.edges]
     data = {"name": name, "nodes": nodes, "edges": edges, "source": source_lines, "sccs": sccs or [], "scc_graph": scc_graph}
 
     # the page lives in tests/unit_test_html_templates; only the placeholders are filled in here

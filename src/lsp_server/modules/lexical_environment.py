@@ -56,7 +56,6 @@ class Scope():
     receiver: str | None = None             # a method's first parameter (self, cls, ...): its attribute writes go to the class's row
 
 
-
     def is_class(self) -> bool:
         return self.scope_type == ScopeType.CLASS
 
@@ -149,33 +148,6 @@ class Environment():
         """The bindings snapshot() hashes, readable: for finding what keeps a loop from converging."""
         return tuple({name: entry.key for name, entry in scope.table.items()} for scope in self.scopes)
 
-    def _scope_of(self, x: str) -> Scope | None:
-        """
-        The scope x belongs to according to symtable, even if x has not
-        been assigned in it yet. None if no enclosing scope binds a free x.
-        Names symtable never saw in this scope are treated as global
-        (then builtins), like Python does for an unbound name.
-        An attribute chain "a.b" belongs to the scope of its root name a.
-        """
-        x = x.split(".")[0]
-        local = self.scopes[-1]
-        if x not in local.symtable.get_identifiers():
-            return self.scopes[0]
-        symbol = local.symtable.lookup(x)
-
-        if symbol.is_free():
-            # Enclosing: nearest outer function that binds x, skipping
-            # class scopes (methods can't see class attributes) and global
-            for scope in reversed(self.scopes[1:-1]):
-                if not scope.is_class() and scope.declares_local(x):
-                    return scope
-            return None
-
-        if symbol.is_global():
-            return self.scopes[0]
-
-        return local
-
     def which(self, x: str) -> SymbolTableEntry | None:
         """The definition x currently refers to, or None if it has no value yet."""
         scope = self._scope_of(x)
@@ -203,6 +175,33 @@ class Environment():
         scope.table[x] = entry
         return entry
 
+
+    def _scope_of(self, x: str) -> Scope | None:
+        """
+        The scope x belongs to according to symtable, even if x has not
+        been assigned in it yet. None if no enclosing scope binds a free x.
+        Names symtable never saw in this scope are treated as global
+        (then builtins), like Python does for an unbound name.
+        An attribute chain "a.b" belongs to the scope of its root name a.
+        """
+        x = x.split(".")[0]
+        local = self.scopes[-1]
+        if x not in local.symtable.get_identifiers():
+            return self.scopes[0]
+        symbol = local.symtable.lookup(x)
+
+        if symbol.is_free():
+            # Enclosing: nearest outer function that binds x, skipping
+            # class scopes (methods can't see class attributes) and global
+            for scope in reversed(self.scopes[1:-1]):
+                if not scope.is_class() and scope.declares_local(x):
+                    return scope
+            return None
+
+        if symbol.is_global():
+            return self.scopes[0]
+
+        return local
 
 def join(envs: list[Environment], make_join: Callable[[str, list[Key | None]], Key]) -> Environment:
     """

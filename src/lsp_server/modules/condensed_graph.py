@@ -170,7 +170,7 @@ class CondensedGraph():
 def visualize_condensed(cg: CondensedGraph, source: str | None = None, name: str = "graph",
                         path: str | None = None) -> str:
     """The CFG view with each loop SCC collapsed into one node; click it to expand its nodes in place."""
-    nid = lambda n: cg.cfg._node_ids[id(n)]
+    nid = lambda n: n.node_id
     loops = [[nid(n) for n in scc.nodes] for scc in cg.sccs if scc.is_loop()]
     # the condenser's own output, drawn as is by the page's SCC graph toggle
     k = {scc: i for i, scc in enumerate(cg.sccs)}
