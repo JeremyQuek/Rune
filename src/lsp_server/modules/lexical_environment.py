@@ -1,3 +1,4 @@
+import ast
 import builtins
 import symtable
 import uuid
@@ -17,16 +18,28 @@ Python's own `symtable` module decides them up front for the whole file.
 
 BUILTIN_SCOPE_ID = "builtins"
 
+# methods Python makes classmethods without a decorator (__new__ is a staticmethod, but is passed the class)
+IMPLICIT_CLASS_METHODS = {"__new__", "__init_subclass__", "__class_getitem__"}
+
 # Provenance table key of a definition:
 #   (line, col)             a real assignment
 #   ("builtins", name)      a builtin, treated as an implicit `from builtins import name`
 #   ("join", node_id, x)    a merge of several definitions at a CFG join
 Key = tuple[int | str, ...]
+Segment = tuple[str, tuple[int, int]]
+NamespaceKey = tuple[str, *tuple[Segment, ...]]
 
+# Provides extra information on beyond symtable of attribute-receiver handling in classes
+# E.g self.x -> instance attribute, scope is we're in a class method body not a function, not a variable name
+# Methods of instance can't see class variable closure
+# Staic methods have no receiver
+# Both cls and self methods should be received by the class index in the global lookup table.
 class ScopeType(Enum):
     MODULE = auto()
     FUNCTION = auto()
     CLASS = auto()
+    INSTANCE_METHOD = auto()   
+    CLASS_METHOD = auto()      
 
 @dataclass
 class SymbolTableEntry():
@@ -35,11 +48,13 @@ class SymbolTableEntry():
 
 @dataclass
 class Scope():
-    scope_id: str                          # uuid4
-    scope_name: str                        # name of the class or function ("top" for the module)
-    scope_type: ScopeType                  # module, function or class
-    symtable: symtable.SymbolTable   # Python's scope analysis for this scope
+    scope_id: str                           #    uuid4
+    export_namespace_key: NamespaceKey      # The namespace the scope lives in: e.g file.A.b
+    scope_type: ScopeType                   # module, function or class
+    symtable: symtable.SymbolTable          # Python's scope analysis for this scope
     table: dict[str, SymbolTableEntry]
+    receiver: str | None = None             # a method's first parameter (self, cls, ...): its attribute writes go to the class's row
+
 
 
     def is_class(self) -> bool:
@@ -61,7 +76,7 @@ class Environment():
             name: SymbolTableEntry(BUILTIN_SCOPE_ID, (BUILTIN_SCOPE_ID, name))
             for name in vars(builtins)
         }
-        self.scopes = [Scope(str(uuid.uuid4()), top.get_name(), ScopeType.MODULE, top, {})]   # global scope
+        self.scopes = [Scope(str(uuid.uuid4()), (filename,), ScopeType.MODULE, top, {})]   # global scope, keyed by its file
 
     def _index_symtables(self, table: symtable.SymbolTable,
                          index: dict[tuple[str, int], symtable.SymbolTable] | None = None,
@@ -72,13 +87,39 @@ class Environment():
             self._index_symtables(child, index)
         return index
 
-    def push_scope(self, name: str, lineno: int) -> Scope:
-        """Enter the function/class `name` defined on `lineno`."""
-        table = self.symtables[(name, lineno)]
-        scope_type = ScopeType.CLASS if table.get_type() == "class" else ScopeType.FUNCTION
-        scope = Scope(str(uuid.uuid4()), name, scope_type, table, {})
+    def push_scope(self, defn: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef, site: Key) -> Scope:
+        """
+        A class extends the parent's namespace key with (name, site); a function inherits it,
+        so a class nested in functions is keyed by its enclosing classes only.
+        A function directly in a class body is a method, typed by its decorators:
+            @staticmethod                                       FUNCTION, no receiver
+            @classmethod, __new__, __init_subclass__, ...       CLASS_METHOD, receiver = first parameter (the class)
+            anything else                                       INSTANCE_METHOD, receiver = first parameter (the instance)
+        Decorators are matched by name, so a shadowed classmethod is missed.
+        """
+        table = self.symtables[(defn.name, site[0])]
+        parent = self.scopes[-1]
+        scope_type = self._scope_type(defn, parent)
+        key = parent.export_namespace_key + ((defn.name, site),) if scope_type == ScopeType.CLASS else parent.export_namespace_key
+        scope = Scope(str(uuid.uuid4()), key, scope_type, table, {})
+        if scope_type in (ScopeType.INSTANCE_METHOD, ScopeType.CLASS_METHOD):
+            params = defn.args.posonlyargs + defn.args.args
+            scope.receiver = params[0].arg if params else None
         self.scopes.append(scope)
         return scope
+
+    def _scope_type(self, defn: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef, parent: Scope) -> ScopeType:
+        if isinstance(defn, ast.ClassDef):
+            return ScopeType.CLASS
+        if not parent.is_class():
+            return ScopeType.FUNCTION
+        decorators = {d.id if isinstance(d, ast.Name) else d.attr
+                      for d in defn.decorator_list if isinstance(d, (ast.Name, ast.Attribute))}
+        if "staticmethod" in decorators:
+            return ScopeType.FUNCTION
+        if "classmethod" in decorators or defn.name in IMPLICIT_CLASS_METHODS:
+            return ScopeType.CLASS_METHOD
+        return ScopeType.INSTANCE_METHOD
 
     def pop_scope(self) -> Scope:
         return self.scopes.pop()
@@ -91,7 +132,8 @@ class Environment():
         env = object.__new__(Environment)
         env.symtables = self.symtables
         env.builtin = self.builtin
-        env.scopes = [Scope(scope.scope_id, scope.scope_name, scope.scope_type, scope.symtable, dict(scope.table))
+        env.scopes = [Scope(scope.scope_id, scope.export_namespace_key, scope.scope_type, scope.symtable, dict(scope.table),
+                            scope.receiver)
                       for scope in self.scopes]
         return env
 

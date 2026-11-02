@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Namespace: __TITLE__</title>
+<style>
+:root {
+    --bg: #ffffff; --panel: #f6f7f9; --border: #d9dce1; --text: #1f2328; --muted: #6b7280;
+    --code: #4b5563; --edge: #c3c8d0; --cls: #7c3aed; --classattr: #059669; --instattr: #2563eb; --hi: #ea580c;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
+    --code: #a3acb9; --edge: #39404d; --cls: #a78bfa; --classattr: #34d399; --instattr: #60a5fa; --hi: #fb923c;
+    }
+}
+:root[data-theme="dark"] {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b93a1;
+    --code: #a3acb9; --edge: #39404d; --cls: #a78bfa; --classattr: #34d399; --instattr: #60a5fa; --hi: #fb923c;
+}
+#theme { margin-left: auto; background: var(--panel); color: var(--text); border: 1px solid var(--border);
+         border-radius: 6px; padding: 3px 10px; font: inherit; cursor: pointer; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+       font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex;
+         gap: 16px; align-items: center; flex-wrap: wrap; }
+header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+.legend { display: flex; gap: 12px; color: var(--muted); flex-wrap: wrap; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px;
+                       border-radius: 2px; margin-right: 4px; vertical-align: -1px; border: 2px solid var(--c); }
+#scroll { height: calc(100vh - 45px); overflow: auto; }
+#canvas { position: relative; }
+pre { margin: 0; position: absolute; font: 13px/22px ui-monospace, SFMono-Regular, Menlo, monospace; }
+#nums { color: var(--muted); text-align: right; opacity: .6; }
+#code { color: var(--code); }
+svg { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+path.edge { fill: none; stroke: var(--c); stroke-width: 1.2; opacity: .45; }
+.mark { position: absolute; height: 22px; border: 1.5px solid var(--c); border-radius: 4px;
+        background: color-mix(in srgb, var(--c) 10%, transparent); cursor: pointer; }
+.cls { --c: var(--cls); } .class_attrs { --c: var(--classattr); } .instance_attrs { --c: var(--instattr); }
+#rows { position: absolute; display: flex; flex-direction: column; gap: 12px; width: 380px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.card h2 { font: 600 13px ui-monospace, Menlo, monospace; margin: 0 0 8px; display: inline-block; }
+.card .field { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.member { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 3px;
+          font-family: ui-monospace, Menlo, monospace; }
+.chip { border: 1.5px solid var(--c); border-radius: 4px; padding: 0 5px; font-size: 11px;
+        background: color-mix(in srgb, var(--c) 10%, transparent); }
+.empty { color: var(--muted); font-style: italic; font-size: 12px; }
+.dim .mark:not(.on), .dim .card:not(.on), .dim .chip:not(.on), .dim path.edge:not(.on) { opacity: .15; }
+path.edge.on { opacity: 1; stroke-width: 2; }
+.on.mark, .on.chip { box-shadow: 0 0 0 2px var(--hi); }
+</style>
+</head>
+<body>
+<header>
+<h1 id="title"></h1>
+<div class="legend">
+    <span style="--c: var(--cls)">class (row)</span>
+    <span style="--c: var(--classattr)">class_attrs</span>
+    <span style="--c: var(--instattr)">instance_attrs</span>
+</div>
+<button id="theme" type="button"></button>
+</header>
+<div id="scroll"><div id="canvas"><svg id="edges"></svg><pre id="nums"></pre><pre id="code"></pre><div id="rows"></div></div></div>
+<script type="application/json" id="data">__DATA__</script>
+<script>
+const data = JSON.parse(document.getElementById("data").textContent);
+
+// theme: auto (follows the OS) -> light -> dark, remembered across reloads when storage allows
+const themes = ["auto", "light", "dark"], themeButton = document.getElementById("theme");
+function applyTheme(theme) {
+    if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.dataset.theme = theme;
+    themeButton.textContent = { auto: "◐ auto", light: "☀ light", dark: "☾ dark" }[theme];
+    themeButton.dataset.theme = theme;
+}
+let savedTheme = "auto";
+try { savedTheme = localStorage.getItem("rune-theme") || "auto"; } catch (e) {}
+applyTheme(themes.includes(savedTheme) ? savedTheme : "auto");
+themeButton.addEventListener("click", () => {
+    const next = themes[(themes.indexOf(themeButton.dataset.theme) + 1) % themes.length];
+    applyTheme(next);
+    try { localStorage.setItem("rune-theme", next); } catch (e) {}
+});
+
+const LH = 22, PAD = 16, SVGNS = "http://www.w3.org/2000/svg";
+const canvas = document.getElementById("canvas"), svg = document.getElementById("edges");
+document.getElementById("title").textContent = `${data.file} · ${data.rows.length} class rows`;
+
+// character width of the code font
+const probe = document.createElement("pre");
+probe.style.cssText = "position:absolute;visibility:hidden;font:13px/22px ui-monospace,SFMono-Regular,Menlo,monospace";
+probe.textContent = "M".repeat(100);
+document.body.appendChild(probe);
+const CW = probe.getBoundingClientRect().width / 100;
+probe.remove();
+
+// source on the left
+const nums = document.getElementById("nums"), code = document.getElementById("code");
+const numW = String(data.lines.length).length * CW;
+nums.textContent = data.lines.map((_, i) => i + 1).join("\n");
+nums.style.cssText = `left:${PAD}px;top:${PAD}px;width:${numW}px`;
+const codeX = PAD + numW + 16;
+code.textContent = data.lines.join("\n");
+code.style.cssText = `left:${codeX}px;top:${PAD}px`;
+
+// one mark per position in the source, shared by every chip that points at it
+const marks = new Map();
+function mark([line, col], label, cls) {
+    const id = `${line},${col}`;
+    if (!marks.has(id)) {
+        const m = document.createElement("div");
+        m.className = `mark ${cls}`;
+        m.style.cssText = `left:${codeX + col * CW - 2}px;top:${PAD + (line - 1) * LH}px;width:${label.length * CW + 4}px`;
+        m.title = `${label} at ${line}:${col}`;
+        canvas.appendChild(m);
+        marks.set(id, m);
+    }
+    return marks.get(id);
+}
+
+// rows on the right, each link a (chip, mark) pair joined by a line
+const maxLen = Math.max(20, ...data.lines.map(l => l.length));
+const rows = document.getElementById("rows");
+rows.style.cssText = `left:${codeX + (maxLen + 10) * CW}px;top:${PAD}px`;
+const links = [];
+function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+}
+for (const row of data.rows) {
+    const card = el("div", "card");
+    const head = el("h2", "chip cls", row.qualname);
+    card.appendChild(head);
+    links.push({ card, chip: head, mark: mark(row.site, row.label, "cls"), cls: "cls" });
+    for (const field of ["class_attrs", "instance_attrs"]) {
+        card.appendChild(el("div", "field", field));
+        const members = Object.entries(row[field]);
+        if (!members.length) card.appendChild(el("div", "empty", "none"));
+        for (const [name, keys] of members) {
+            const line = el("div", "member");
+            line.appendChild(el("span", null, name));
+            for (const key of keys) {
+                const chip = el("span", `chip ${field}`, `${key[0]}:${key[1]}`);
+                line.appendChild(chip);
+                links.push({ card, chip, mark: mark(key, name, field), cls: field });
+            }
+            card.appendChild(line);
+        }
+    }
+    card.appendChild(el("div", "field", `bases ${row.bases.length ? JSON.stringify(row.bases) : "(not written yet)"}`));
+    rows.appendChild(card);
+}
+
+// size the canvas, then draw each link from the chip's left edge to the mark's right edge
+function draw() {
+    const width = rows.offsetLeft + rows.offsetWidth + PAD;
+    const height = Math.max(PAD * 2 + data.lines.length * LH, rows.offsetTop + rows.offsetHeight + PAD);
+    canvas.style.cssText = `width:${width}px;height:${height}px`;
+    svg.setAttribute("width", width); svg.setAttribute("height", height);
+    svg.replaceChildren();
+    const base = canvas.getBoundingClientRect();
+    for (const link of links) {
+        const c = link.chip.getBoundingClientRect(), m = link.mark.getBoundingClientRect();
+        const x1 = c.left - base.left, y1 = c.top - base.top + c.height / 2;
+        const x2 = m.right - base.left, y2 = m.top - base.top + m.height / 2;
+        const dx = Math.max(40, (x1 - x2) / 2);
+        const path = document.createElementNS(SVGNS, "path");
+        path.setAttribute("d", `M${x1},${y1} C${x1 - dx},${y1} ${x2 + dx},${y2} ${x2},${y2}`);
+        path.setAttribute("class", `edge ${link.cls}`);
+        svg.appendChild(path);
+        link.path = path;
+    }
+}
+draw();
+window.addEventListener("resize", draw);
+
+// hover a card, chip or mark: light up its links, dim the rest
+function highlight(active) {
+    canvas.classList.toggle("dim", active.length > 0);
+    for (const link of links) for (const e of [link.chip, link.mark, link.path, link.card]) e.classList.remove("on");
+    for (const link of active) for (const e of [link.chip, link.mark, link.path, link.card]) e.classList.add("on");
+}
+for (const link of links) {
+    link.chip.addEventListener("mouseenter", () => highlight([link]));
+    link.mark.addEventListener("mouseenter", () => highlight(links.filter(l => l.mark === link.mark)));
+    link.card.addEventListener("mouseenter", () => highlight(links.filter(l => l.card === link.card)));
+    for (const e of [link.chip, link.mark, link.card]) e.addEventListener("mouseleave", () => highlight([]));
+}
+</script>
+</body>
+</html>

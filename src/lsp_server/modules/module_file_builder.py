@@ -4,8 +4,9 @@ import re
 import tokenize
 from collections import deque
 
+from global_namespace_table import GlobalNamespaceTable
 from type_lattice import UNBOUND, LatticeValue
-from lexical_environment import Environment, Key, join
+from lexical_environment import Environment, Key, ScopeType, join
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from control_flow_graph import ControlFlowGraph, Node
 from condensed_graph import CondensedGraph, SCCNode
@@ -18,7 +19,7 @@ class ModuleFileBuilder():
 
     MAX_LOOP_PASSES = 10   
 
-    def __init__(self, filepath: str) -> None:
+    def __init__(self, filepath: str, global_namespace_table: GlobalNamespaceTable) -> None:
         self.filepath = filepath
         self.env: Environment | None = None   # built in process_file, once the source is read
         self.provenance_table: ProvenanceTable = {}   # Key -> TableEntry
@@ -27,6 +28,7 @@ class ModuleFileBuilder():
 
         self.cfg: ControlFlowGraph | None = None
         self.source_lines: list[str] = []
+        self.global_namespace_table = global_namespace_table
 
     def process_file(self) -> None:
         with open(self.filepath, "r", encoding="utf-8") as f:
@@ -34,7 +36,7 @@ class ModuleFileBuilder():
             module_ast = ast.parse(source_code, filename=self.filepath)
         self.source_lines = source_code.splitlines()
 
-        self.env = Environment(source_code, self.filepath)   # symtable parses the source text; the path is only for error messages
+        self.env = Environment(source_code, self.filepath)   # symtable parses the source text; the path is for error messages and the module's namespace key
 
         # builtins are implicit imports: `from builtins import name`
         builtins_module = self._module_entry("builtins")
@@ -114,13 +116,18 @@ class ModuleFileBuilder():
             self.env.pop_scope()   # leaving the class body
         if u in self.cfg.function_bodies:
             defn = self.cfg.function_bodies[u]   # entering a function body: its env is the def's clone, no pop needed
-            self.env.push_scope(defn.name, defn.lineno)
+            self.env.push_scope(defn, *self._get_declared_key_offset(defn))
 
         self._analyze_code_block(u)
 
         if isinstance(u.ast_node, ClassDefinitionEntry):
             defn = u.ast_node.body[0].value   # the class name is bound in the enclosing scope, then the body runs in its own
-            self.env.push_scope(defn.name, defn.lineno)
+            [site] = self._get_declared_key_offset(defn)
+            scope = self.env.push_scope(defn, site)
+            self.global_namespace_table.create_entry(scope.export_namespace_key)
+            # A's ClassDef entry, written just above: the class object, resolved here where its row key exists
+            entry = self.provenance_table[site]
+            entry.type, entry.resolved = LatticeValue.of(("type", scope.export_namespace_key)), True
 
     def _join_elimintaion(self)->None:
         """
@@ -246,6 +253,7 @@ class ModuleFileBuilder():
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ class A(B):                     │ the CFG desugars it to Assign: reads of bases, keywords, decorators → def A (recipe the ClassDef), keyed at the │
         │                                 │ name A (found in the source: the AST stores it as a string). Body runs in the class's own scope                 │
+        │                                 │ A's entry is resolved to type[A], ("type", A's namespace key), when the class scope is pushed                   │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ def f(...) / async def f(...)   │ the CFG desugars it to Assign: reads of decorators and defaults → def f (recipe the FunctionDef), keyed at the  │
         │                                 │ name f. The body runs on a clone of the env at the def (the def entry branches), in the function's own scope    │
@@ -474,7 +482,24 @@ class ModuleFileBuilder():
     def _bind(self, symbol: str, key: Key, entry: TableEntry) -> Key:
         self.provenance_table[key] = entry
         self.env.assign(symbol, key)
+        self._receiver_write(symbol, key)
         return key
+
+    def _receiver_write(self, symbol: str, key: Key) -> None:
+        """
+        self.x = e in an instance method → x in the class row's instance_attrs; cls.x = e in a classmethod → class_attrs.
+        Every write form lands here through _bind (=, +=, x: T = e, for/with targets). Only one level (self.a.b writes
+        into a's type, not the class), and only while the receiver is still the parameter (not after self = other).
+        """
+        scope = self.env.scopes[-1]
+        receiver, _, name = symbol.partition(".")
+        if scope.receiver is None or receiver != scope.receiver or not name or "." in name:
+            return
+        current = self.env.which(receiver)
+        if current is None or self.provenance_table[current.key].origin != Origin.PARAMETER:
+            return
+        kind = "instance" if scope.scope_type == ScopeType.INSTANCE_METHOD else "class"
+        self.global_namespace_table.add_attribute(scope.export_namespace_key, name, kind, key)
 
     def _join_entry(self, node_id: int, symbol: str, keys: list[Key | None]) -> Key:
         """
@@ -776,7 +801,8 @@ def visualize_file(analyzer: ModuleFileBuilder, path: str | None = None) -> str:
     return str(out)
 
 if __name__=="__main__":
-    module_file_builder = ModuleFileBuilder("/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/class.py") 
+    x= GlobalNamespaceTable()
+    module_file_builder = ModuleFileBuilder("/Users/jeremyquek/Desktop/rune/tests/unit_test/cfg_graph/testcases/class.py", x) 
     module_file_builder.process_file()
 
     visualize_file(module_file_builder)

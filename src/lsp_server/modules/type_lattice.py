@@ -7,6 +7,11 @@ A LatticeValue is a set of type names:
     int          -> {"int"}
     int | str    -> {"int", "str"}
     Any          -> {"Any"}          top, could be anything
+    type[A]      -> {("type", key)}      the class object A, key = its global namespace table row
+    A            -> {("instance", key)}  an instance of A
+
+A class is a ClassRef rather than a name, so the type carries its row: two classes named A
+(if: class A … else: class A …) stay two members of a union, and display() shows both as A.
 
 Join is set union, so:
 
@@ -22,13 +27,27 @@ finite so fixpoint iteration always terminates.
 
 from collections.abc import Iterable
 
+from lexical_environment import NamespaceKey
+
 MAX_UNION_SIZE = 5
 
 ANY = "Any"
 UNBOUND = "Unbound"
 
+ClassRef = tuple[str, NamespaceKey]   # ("type", key) or ("instance", key)
+Type = str | ClassRef
+
+
+def display(t: Type) -> str:
+    """A type as hover shows it: ("type", key) -> type[A], ("instance", key) -> A, a name as is."""
+    if isinstance(t, str):
+        return t
+    kind, key = t
+    name = key[-1][0]
+    return f"type[{name}]" if kind == "type" else name
+
 class LatticeValue():
-    def __init__(self, types: Iterable[str] = ()) -> None:
+    def __init__(self, types: Iterable[Type] = ()) -> None:
         types = frozenset(types)
         if ANY in types or len(types) > MAX_UNION_SIZE:
             types = frozenset({ANY})
@@ -39,7 +58,7 @@ class LatticeValue():
         return cls()
 
     @classmethod
-    def of(cls, type_name: str) -> "LatticeValue":
+    def of(cls, type_name: Type) -> "LatticeValue":
         return cls({type_name})
 
     def join(self, other: "LatticeValue") -> "LatticeValue":
@@ -57,7 +76,7 @@ class LatticeValue():
     def __repr__(self) -> str:
         if self.is_unknown():
             return "Unknown"
-        return " | ".join(sorted(self.types))
+        return " | ".join(sorted(display(t) for t in self.types))
 
 
 if __name__ == "__main__":
