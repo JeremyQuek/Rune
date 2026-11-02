@@ -136,6 +136,7 @@ class ModuleFileBuilder():
         self.env = u.enviroment
 
         if isinstance(u.ast_node, Exit) and u.ast_node.kind == ExitKind.CLASS_DEFINITION:
+            self._export_class_body()
             self.env.pop_scope()   # leaving the class body
         if u in self.cfg.function_bodies:
             defn = self.cfg.function_bodies[u]   # entering a function body: its env is the def's clone, no pop needed
@@ -179,6 +180,18 @@ class ModuleFileBuilder():
         for key, leaves in flat.items():   # assigned after, so every join is flattened from the settled table
             table[key].parents = leaves
 
+
+    def _export_class_body(self) -> None:
+        """
+        The class scope at its Exit → the row's class_attrs: b = 56, and every def (methods, classmethods,
+        staticmethods: all are attributes of the class). A snapshot, like the module export, so a name bound in
+        a branch arrives as one join key. Plain names only: a chain (a.b) belongs to a's type. cls.x writes from
+        the method bodies land in the same list, in whatever order the traversal reaches them: the type is their union.
+        """
+        scope = self.env.scopes[-1]
+        for name, entry in scope.table.items():
+            if "." not in name:
+                self.global_namespace_table.add_attribute(scope.export_namespace_key, name, "class", entry.key)
 
     def _base_key(self, base: ast.expr) -> Key | None:
         """
@@ -387,8 +400,8 @@ class ModuleFileBuilder():
             back to m.* (latest first), then builtins.
           - Relative roots (., ..) are resolved to a module by the ImportResolver, which
             needs the importing file.
-          - Class Exit: the class body's {member: key} → GlobalNamespaceTable class_attrs (bases are
-            written at the class push, _base_key).
+          - Class Exit: the class body's {member: key} → GlobalNamespaceTable class_attrs (_export_class_body;
+            bases are written at the class push, _base_key).
           - Module Exit: the global scope {name: key} → GlobalNamespaceTable class_attrs, row keyed by
             (path,) (_export_globals).
           - Function bodies: return_stmts on the def entry, and a free name with no binding at the def

@@ -9,7 +9,7 @@ class GlobalNamespaceTable:
 
     Key:  (path, (Outer, (line, col)), (Inner, (line, col)))      functions skipped
           (path,)                                                 the module: its globals at the Exit, in class_attrs
-    Row:  class_attrs     {name: [key, ...]}   cls.x in a classmethod
+    Row:  class_attrs     {name: [key, ...]}   class-body names and defs (at the class Exit) and cls.x in a classmethod
           instance_attrs  {name: [key, ...]}   self.x in an instance method
           bases           [key | None, ...]    each base's read key, in order; None: not a name (make_base()), so the MRO is unknown past it
           metaclass       key | None           metaclass=M's read key; None: not given, so the bases' metaclass, else type

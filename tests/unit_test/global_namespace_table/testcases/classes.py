@@ -1,4 +1,5 @@
 class A:
+    b = 56
     def __init__(this, n):
         this.x = 1                  # instance x, receiver named "this"
         this.y: int = n             # instance y

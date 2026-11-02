@@ -126,7 +126,7 @@ function mark([line, col], label, cls) {
 // rows on the right, each link a (chip, mark) pair joined by a line
 const maxLen = Math.max(20, ...data.lines.map(l => l.length));
 const rows = document.getElementById("rows");
-rows.style.cssText = `left:${codeX + (maxLen + 10) * CW}px;top:${PAD}px`;
+rows.style.cssText = `left:${codeX + (Math.min(maxLen, 80) + 16) * CW}px;top:${PAD}px`;   // capped, so one long line doesn't push the cards off screen
 const links = [];
 function el(tag, cls, text) {
     const e = document.createElement(tag);
