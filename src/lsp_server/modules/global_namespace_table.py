@@ -77,13 +77,13 @@ def visualise_table(table: GlobalNamespaceTable, builder, path: str | None = Non
     return str(out)
 
 if __name__=="__main__":
-    from module_file_builder import ModuleFileBuilder   # here, not at the top: module_file_builder imports this file
+    from module_table_builder import ModuleTableBuilder   # here, not at the top: module_table_builder imports this file
 
     table = GlobalNamespaceTable()
     filepath= "/Users/jeremyquek/Desktop/rune/tests/unit_test/global_namespace_table/testcases/classes.py"
     with open(filepath, encoding="utf-8") as f:
-        module_file_builder = ModuleFileBuilder(filepath, f.read(), table)
-    module_file_builder.build()
+        module_table_builder = ModuleTableBuilder(filepath, f.read(), table)
+    module_table_builder.build()
     table._pretty_print()
-    visualise_table(table, module_file_builder)
+    visualise_table(table, module_table_builder)
 

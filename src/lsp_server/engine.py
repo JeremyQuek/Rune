@@ -64,7 +64,6 @@ class Engine():
             {
               "name":  "x",                                       # hovered symbol
               "nodes": [{"id", "code", "line", "type", "kind",    # id 0 is the hovered entry, then BFS order
-                         "source",                                # no operands: where the type comes from ("literal", ...), else None
                          "file",                                  # path of the file the entry is in (server.py makes it a uri)
                          "operands": [{"name", "type", "line"}]}, # the node's drawn parents, line None for builtins
                         ...],
@@ -120,7 +119,6 @@ class Engine():
                     else self.lines[path][line - 1].strip() if line <= len(self.lines[path]) else mfo.symbol(k))
             kind = "builtin" if builtin(k) else "read" if mfo.side(k) == "rhs" else "def"
             return {"id": node_id, "code": code, "line": line, "type": repr(mfo.get_type(k)), "kind": kind, "file": path,
-                    "source": None if parents else mfo.source(k),
                     "operands": [{"name": mfo.symbol(p), "type": repr(mfo.get_type(p)), "line": line_of(p)} for p in parents]}
 
         ids = {key: 0}

@@ -12,7 +12,7 @@ from control_flow_graph import ControlFlowGraph, Node
 from condensed_graph import CondensedGraph, SCCNode
 from ast_node_wrappers import CaughtAs, ClassDefinitionEntry, ElementOf, EnteredFrom, Exit, ExitKind, ForEntry, ParameterOf
 
-class ModuleFileBuilder():
+class ModuleTableBuilder():
     """
     Takes a condensed control flow graph and outputs a granular reference graph for each variable in a file, stored as a table. 
     """
@@ -787,7 +787,7 @@ class ModuleFileBuilder():
         return ".".join([root.id] + [part.attr for part in reversed(spine)])
 
 # Test function
-def visualize_file(analyzer: ModuleFileBuilder, path: str | None = None) -> str:
+def visualize_file(analyzer: ModuleTableBuilder, path: str | None = None) -> str:
     """
     Debug view of the provenance table: the source file with every entry boxed at its
     (line, col), and an arrow from each parent to its child. Entries with no position
@@ -863,7 +863,7 @@ if __name__=="__main__":
     x= GlobalNamespaceTable()
     filepath = "/Users/jeremyquek/Desktop/rune/tests/unit_test/global_namespace_table/testcases/classes.py"
     with open(filepath, encoding="utf-8") as f:
-        module_file_builder = ModuleFileBuilder(filepath, f.read(), x)
-    module_file_builder.build()
+        module_table_builder = ModuleTableBuilder(filepath, f.read(), x)
+    module_table_builder.build()
 
-    visualize_file(module_file_builder)
+    visualize_file(module_table_builder)

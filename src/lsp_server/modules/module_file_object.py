@@ -8,7 +8,7 @@ from functools import reduce
 from type_lattice import LatticeValue, display
 from lexical_environment import Key
 from provenance_table import Origin, ProvenanceTable, TableEntry
-from module_file_builder import ModuleFileBuilder
+from module_table_builder import ModuleTableBuilder
 from global_namespace_table import GlobalNamespaceTable
 from ast_node_wrappers import CaughtAs, ElementOf, EnteredFrom, ParameterOf
 
@@ -112,7 +112,7 @@ class ModuleFileObject():
     def __init__(self, filepath: str, source_code: str, global_namespace_table: GlobalNamespaceTable):
         self.filepath: str = filepath
         self.global_namespace_table: GlobalNamespaceTable= global_namespace_table
-        self.table: ProvenanceTable = ModuleFileBuilder(filepath, source_code, global_namespace_table).build()
+        self.table: ProvenanceTable = ModuleTableBuilder(filepath, source_code, global_namespace_table).build()
         self.expr_evaluator:ExpressionEvaluatorMock = ExpressionEvaluatorMock
 
     def get_type(self, key: Key) -> LatticeValue:
