@@ -10,7 +10,8 @@ from lexical_environment import Environment, Key, ScopeType, join
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from control_flow_graph import ControlFlowGraph, Node
 from condensed_graph import CondensedGraph, SCCNode
-from ast_node_wrappers import CaughtAs, ClassDefinitionEntry, ElementOf, EnteredFrom, Exit, ExitKind, ForEntry, ParameterOf
+from ast_node_wrappers import (CaughtAs, ClassDefinitionEntry, EnteredFrom, Exit, ExitKind, ForEntry, IteratedFrom, ParameterOf,
+                               StarredFrom, UnpackedAt)
 
 class ModuleTableBuilder():
     """
@@ -285,7 +286,7 @@ class ModuleTableBuilder():
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ x = y = e                       │ reads of e → def x, def y                                                                                       │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-        │ x, *y = e                       │ reads of e → def x, def y (recipe ElementOf(e, i) / ElementOf(e, i, rest=True))                                 │
+        │ x, *y = e                       │ reads of e → def x, def y (recipe UnpackedAt(e, i) / StarredFrom(e, i), each keeping the target tuple)          │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
         │ x: T                            │ def x, resolved T                                                                                               │
         ├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
@@ -331,7 +332,7 @@ class ModuleTableBuilder():
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ if / elif / while t:      │ the branch entry carries t: reads of t                                                 │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
-        │ for x in it:              │ the CFG desugars it to Assign(x, it): reads of it → def x (recipe ElementOf(it, None)) │
+        │ for x in it:              │ the CFG desugars it to Assign(x, it): reads of it → def x (recipe IteratedFrom(it, x)) │
         ├───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┤
         │ loops (for / while)       │ the head branches into the body and LoopNeverRanEntry (no body, 0 iterations);         │
         │                           │ the body's tail goes back to ForEntry/WhileEntry (back edge) and merges with the       │
@@ -417,7 +418,7 @@ class ModuleTableBuilder():
                 # desugared `for x in it`: x is an element of it
                 parents = self._reads(value)
                 for target in targets:
-                    self._define(target, ElementOf(value, None), parents)
+                    self._define(target, IteratedFrom(value, target), parents)
 
             case ast.Assign(value=ast.FunctionDef() | ast.AsyncFunctionDef() | ast.ClassDef() as defn):
                 # desugared `def f` / `class A(B)`: only decorators, bases and defaults run here
@@ -523,9 +524,9 @@ class ModuleTableBuilder():
             case ast.Tuple(elts=elts) | ast.List(elts=elts):
                 for i, elt in enumerate(elts):
                     if isinstance(elt, ast.Starred):
-                        self._define(elt.value, ElementOf(recipe, i, rest=True), parents)
+                        self._define(elt.value, StarredFrom(recipe, i, target), parents)
                     else:
-                        self._define(elt, ElementOf(recipe, i), parents)
+                        self._define(elt, UnpackedAt(recipe, i, target), parents)
             case _:
                 symbol = self._chain_symbol(target)
                 if symbol is None:
@@ -810,9 +811,12 @@ def visualize_file(analyzer: ModuleTableBuilder, path: str | None = None) -> str
         match expr:
             case None:
                 return ""
-            case ElementOf(value=value, index=index, rest=rest):
-                which = "the rest" if rest else ("an element" if index is None else f"element {index}")
-                return f"{which} of {describe(value)}"
+            case IteratedFrom(value=value):
+                return f"an element of {describe(value)}"
+            case UnpackedAt(value=value, index=index):
+                return f"element {index} of {describe(value)}"
+            case StarredFrom(value=value):
+                return f"the rest of {describe(value)}"
             case ast.FunctionDef() | ast.AsyncFunctionDef():
                 return f"def {expr.name}(...)"
             case ast.ClassDef():

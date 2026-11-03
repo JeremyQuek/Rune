@@ -126,18 +126,66 @@ class CaseEntry(Entry): pass
 
 # --------- Provenance recipes --------- #
 
-class ElementOf(ast.expr):
+def unparse_header(stmt: ast.stmt) -> str:
+    """A statement's header as source: stmt rebuilt with an empty body, unparsed, without the colon."""
+    return ast.unparse(stmt).rstrip(":")
+
+
+class IteratedFrom(ast.expr):
     """
-    Recipe for a name bound by unpacking or iteration, which has no expression of its own:
-        x, *y = e     x -> ElementOf(e, 0), y -> ElementOf(e, 1, rest=True)
-        for x in it   x -> ElementOf(it, None)
+    Recipe for a name bound by `for target in value`: an element of value (the iteration protocol).
+        for x in it   x -> IteratedFrom(it, target=x)
+    target is the loop's whole target, kept so unparse can rebuild the statement.
     """
     _fields = ('value',)
 
-    def __init__(self, value: ast.AST, index: int | None, rest: bool = False) -> None:
+    def __init__(self, value: ast.expr, target: ast.expr) -> None:
+        self.value = value
+        self.target = target
+
+    def unparse(self) -> str:
+        return unparse_header(ast.For(target=self.target, iter=self.value, body=[], orelse=[], lineno=0, type_comment=None))
+
+
+class UnpackedAt(ast.expr):
+    """
+    Recipe for a name bound by unpacking, which has no expression of its own: the element at index.
+        x, y = e      x -> UnpackedAt(e, 0, target=(x, y))
+    target is the tuple being unpacked at this level. When value is itself a binding wrapper
+    (for a, b in pairs: a -> UnpackedAt(IteratedFrom(pairs), 0)), the statement is the outer one's.
+    """
+    _fields = ('value',)
+
+    def __init__(self, value: ast.expr, index: int, target: ast.expr) -> None:
         self.value = value
         self.index = index
-        self.rest = rest
+        self.target = target
+
+    def unparse(self) -> str:
+        return _unpacking_statement(self)
+
+
+class StarredFrom(ast.expr):
+    """
+    Recipe for the starred name in unpacking: the rest, as a list, from position index on.
+        x, *y = e     y -> StarredFrom(e, 1, target=(x, *y))
+    """
+    _fields = ('value',)
+
+    def __init__(self, value: ast.expr, index: int, target: ast.expr) -> None:
+        self.value = value
+        self.index = index
+        self.target = target
+
+    def unparse(self) -> str:
+        return _unpacking_statement(self)
+
+
+def _unpacking_statement(node: UnpackedAt | StarredFrom) -> str:
+    """target = value, or the enclosing binding's statement when value is another wrapper (for, with, nested unpacking)."""
+    if isinstance(node.value, (IteratedFrom, UnpackedAt, StarredFrom, EnteredFrom)):
+        return node.value.unparse()
+    return unparse_header(ast.Assign(targets=[node.target], value=node.value, lineno=0, type_comment=None))
 
 
 class CaughtAs(ast.expr):
@@ -151,15 +199,24 @@ class CaughtAs(ast.expr):
         self.type = type
         self.name = name
 
+    def unparse(self) -> str:
+        return unparse_header(ast.ExceptHandler(type=self.type, name=self.name, body=[]))
+
 
 class EnteredFrom(ast.expr):
     """
     Recipe for `with cm as f`: f is cm.__enter__().
+    target is the item's `as` target, kept so unparse can rebuild the statement.
     """
     _fields = ('value',)
 
-    def __init__(self, value: ast.expr) -> None:
+    def __init__(self, value: ast.expr, target: ast.expr) -> None:
         self.value = value
+        self.target = target
+
+    def unparse(self) -> str:
+        item = ast.withitem(context_expr=self.value, optional_vars=self.target)
+        return unparse_header(ast.With(items=[item], body=[], lineno=0, type_comment=None))
 
 
 class ParameterOf(ast.expr):
@@ -176,3 +233,10 @@ class ParameterOf(ast.expr):
         self.arg = arg
         self.default = default
         self.kind = kind
+
+    def unparse(self) -> str:
+        """The parameter as written in the signature: *args, b: int = 0, b=0."""
+        text = {"vararg": "*", "kwarg": "**"}.get(self.kind, "") + ast.unparse(self.arg)
+        if self.default is not None:
+            text += (" = " if self.arg.annotation is not None else "=") + ast.unparse(self.default)
+        return text

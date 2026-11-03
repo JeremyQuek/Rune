@@ -10,7 +10,7 @@ from lexical_environment import Key
 from provenance_table import Origin, ProvenanceTable, TableEntry
 from module_table_builder import ModuleTableBuilder
 from global_namespace_table import GlobalNamespaceTable
-from ast_node_wrappers import CaughtAs, ElementOf, EnteredFrom, ParameterOf
+from ast_node_wrappers import CaughtAs, EnteredFrom, IteratedFrom, ParameterOf, StarredFrom, UnpackedAt, unparse_header
 
 class ExpressionEvaluatorMock():
     """
@@ -34,8 +34,11 @@ class ExpressionEvaluatorMock():
         if isinstance(recipe, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return LatticeValue.of(f"⟨def {recipe.name}(...)⟩")
 
-        # a wrapper (ElementOf, CaughtAs, EnteredFrom) is substituted inside its one plain-AST field
-        inner = recipe.type if isinstance(recipe, CaughtAs) else recipe.value if isinstance(recipe, (ElementOf, EnteredFrom)) else recipe
+        # a wrapper (IteratedFrom, UnpackedAt, StarredFrom, CaughtAs, EnteredFrom) is substituted inside its one plain-AST
+        # field; nested ones (for a, b in pairs: UnpackedAt(IteratedFrom(pairs))) are unwrapped to the innermost
+        inner = recipe
+        while isinstance(inner, (CaughtAs, IteratedFrom, UnpackedAt, StarredFrom, EnteredFrom)):
+            inner = inner.type if isinstance(inner, CaughtAs) else inner.value
         substituted, hits = ExpressionEvaluatorMock._mock_substitute(inner, parent_types)
         if inner is recipe and isinstance(substituted, ast.Name) and len(hits) == 1:
             return parent_types[hits[0]]   # the whole recipe was one leaf
@@ -70,9 +73,12 @@ class ExpressionEvaluatorMock():
     def _mock_text(recipe: ast.AST, substituted: ast.AST, parent_types: dict[Key, LatticeValue]) -> str:
         """The substituted recipe as text (substituted is the wrapper's inner field); the wrappers and x += e have no unparse of their own."""
         match recipe:
-            case ElementOf(index=index, rest=rest):
-                which = "*" if rest else ("element of " if index is None else f"[{index}] of ")
-                return f"{which}{ast.unparse(substituted)}"
+            case IteratedFrom():
+                return f"element of {ast.unparse(substituted)}"
+            case UnpackedAt(index=index):
+                return f"[{index}] of {ast.unparse(substituted)}"
+            case StarredFrom():
+                return f"*{ast.unparse(substituted)}"
             case CaughtAs():
                 return f"instance of {ast.unparse(substituted)}"
             case EnteredFrom():
@@ -106,12 +112,14 @@ class ModuleFileObject():
         symbol(key)        the name written at key ("x", "self.x")
         side(key)          "lhs" if key writes its symbol, "rhs" if it reads it
         source(key)        where a type with no parents comes from: "literal", "annotation", "builtin", ...
+        code(key)          the code that made key, for trace labels: "c = a + b", "for a, b in pairs", "k.v"
     """
     MAX_CYCLE_PASSES = 10
 
     def __init__(self, filepath: str, source_code: str, global_namespace_table: GlobalNamespaceTable):
         self.filepath: str = filepath
         self.global_namespace_table: GlobalNamespaceTable= global_namespace_table
+        self.source_code: str = source_code
         self.table: ProvenanceTable = ModuleTableBuilder(filepath, source_code, global_namespace_table).build()
         self.expr_evaluator:ExpressionEvaluatorMock = ExpressionEvaluatorMock
 
@@ -180,6 +188,63 @@ class ModuleFileObject():
         if entry.expr is not None and not any(isinstance(n, (ast.Name, ast.Attribute)) for n in ast.walk(entry.expr)):
             return "literal"
         return "unresolved"
+
+    def code(self, key: Key) -> str:
+        """
+        The code that made key, for trace labels; never a comment, always one line.
+            builtin                      builtins.len
+            binding wrapper              its statement, rebuilt by the wrapper's unparse: for a, b in pairs, x, *y = e,
+                                         except E as err, with open(p) as fh, b: int = 0
+            def f / class A              the header, decorators and body dropped: def f(a, b=x) -> int
+            import                       import m / from m import b / ... as k (the recipes are synthetic: no source)
+            read                         its exact text: k.v
+            x += e                       the statement's exact text
+            x: T (no value)              x: T, from the resolved type
+            any other definition         symbol = its recipe's exact text: c = a + b
+        Exact text is cut from the source by position, so it keeps the user's formatting; rebuilt statements are
+        ast.unparse'd, so they're normalised.
+        """
+        entry = self.table.get(key)
+        if entry is None:
+            return ""
+        expr = entry.expr
+        if key[0] == "builtins":
+            return f"builtins.{entry.symbol}"
+        if isinstance(expr, (IteratedFrom, UnpackedAt, StarredFrom, CaughtAs, EnteredFrom, ParameterOf)):
+            return expr.unparse()
+        if isinstance(expr, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            header = copy.copy(expr)
+            header.body, header.decorator_list = [], []
+            return unparse_header(header)
+        if entry.origin == Origin.IMPORT or (expr is not None and getattr(expr, "lineno", None) is None):
+            return self._import_code(entry)
+        if expr is None:
+            return f"{entry.symbol}: {entry.type!r}" if entry.resolved else entry.symbol
+        text = self._source_segment_code(expr)
+        if text is None:
+            return entry.symbol
+        if entry.side == "rhs" or isinstance(expr, ast.AugAssign):
+            return text
+        return f"{entry.symbol} = {text}"
+
+    def _source_segment_code(self, node: ast.AST) -> str | None:
+        """node's exact source text, joined onto one line; None if it has no position."""
+        text = ast.get_source_segment(self.source_code, node)
+        return " ".join(line.strip() for line in text.splitlines()) if text is not None else None
+
+    def _import_code(self, entry: TableEntry) -> str:
+        """Import entries have synthetic recipes: m (the root), Attribute(m, a) (a member), Name(a) (an `as` alias)."""
+        match entry.expr:
+            case None:
+                return f"import {entry.symbol}"
+            case ast.Attribute(value=ast.Name(id=receiver), attr=attr):
+                return f"from {receiver} import {attr}"
+            case ast.Name(id=name):
+                parent = self.table.get(entry.parents[0]) if entry.parents else None
+                if parent is not None and isinstance(parent.expr, ast.Attribute):
+                    return f"from {parent.expr.value.id} import {name} as {entry.symbol}"
+                return f"import {name} as {entry.symbol}"
+        return entry.symbol
 
     def _run_tarjan(self, root: Key) -> Iterator[list[Key]]:
         """

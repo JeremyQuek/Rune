@@ -41,14 +41,12 @@ class Engine():
     def __init__(self) -> None:
         self.global_namespace_table = GlobalNamespaceTable()
         self.files: dict[str, ModuleFileObject] = {}   # path -> its analysis
-        self.lines: dict[str, list[str]] = {}          # path -> its source lines, the code column of the trace
 
     def open_file(self, path: str, source: str) -> None:
         try:
             self.files[path] = ModuleFileObject(path, source, self.global_namespace_table)
         except SyntaxError:
-            return   # mid-edit code often doesn't parse, so keep the last good analysis
-        self.lines[path] = source.splitlines()
+            pass   # mid-edit code often doesn't parse, so keep the last good analysis
 
     def hover(self, path: str, line: int, col: int) -> HoverResult | None:
         mfo = self.files.get(path)
@@ -64,6 +62,7 @@ class Engine():
             {
               "name":  "x",                                       # hovered symbol
               "nodes": [{"id", "code", "line", "type", "kind",    # id 0 is the hovered entry, then BFS order
+                         "source",                                # no operands: where the type comes from ("literal", ...), else None
                          "file",                                  # path of the file the entry is in (server.py makes it a uri)
                          "operands": [{"name", "type", "line"}]}, # the node's drawn parents, line None for builtins
                         ...],
@@ -115,10 +114,10 @@ class Engine():
 
         def node(k: Key, node_id: int, parents: list[Key]) -> dict:
             line = line_of(k)
-            code = (f"builtins.{mfo.symbol(k)}" if line is None
-                    else self.lines[path][line - 1].strip() if line <= len(self.lines[path]) else mfo.symbol(k))
+            code = mfo.code(k)
             kind = "builtin" if builtin(k) else "read" if mfo.side(k) == "rhs" else "def"
             return {"id": node_id, "code": code, "line": line, "type": repr(mfo.get_type(k)), "kind": kind, "file": path,
+                    "source": None if parents else mfo.source(k),
                     "operands": [{"name": mfo.symbol(p), "type": repr(mfo.get_type(p)), "line": line_of(p)} for p in parents]}
 
         ids = {key: 0}

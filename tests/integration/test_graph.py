@@ -11,3 +11,6 @@ name = "rune"
 suffix = "!"
 greeting = name + suffix
 loud = greeting + suffix      # suffix is reached twice
+
+for i in range(len(x)):
+    x = i

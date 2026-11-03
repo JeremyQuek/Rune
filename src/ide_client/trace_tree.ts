@@ -3,9 +3,11 @@ import * as vscode from 'vscode';
 /*
  * Shows a variable's trace as a native tree in the Explorer sidebar ("Rune Trace").
  *
- * The server sends a TraceGraph (see trace_graph() in server.py). The hovered
+ * The server sends a TraceGraph (see Engine.trace_graph in engine.py). The hovered
  * entry is the root, and expanding a row shows the entries its type came from.
- * A DAG shown as a tree repeats shared parents under each child.
+ * The graph can be cyclic (loops) and shares parents (diamonds), so the tree is a spanning
+ * tree: each node expands once, where it first appears; later appearances are leaves
+ * marked "↻ shown above". Without this a cycle expands forever and crashes the window.
  * Clicking a row jumps to its line.
  */
 
@@ -28,10 +30,19 @@ export type TraceGraph = {
 
 export const TRACE_VIEW_ID = 'runeTrace';
 
-class TraceTreeProvider implements vscode.TreeDataProvider<TraceNode> {
+// One row of the tree. Rows are distinct objects even when they show the same node.
+type Row = {
+  node: TraceNode;
+  repeat: boolean;   // the node already expanded elsewhere in the tree: shown as a leaf
+  children?: Row[];  // cached, so collapsing and re-expanding a row gives the same rows
+};
+
+class TraceTreeProvider implements vscode.TreeDataProvider<Row> {
   private uri = '';
   private graph: TraceGraph | undefined;
   private parentsOf = new Map<number, number[]>(); // child id -> parent ids
+  private expanded = new Set<number>();            // node ids that already have a full (non-repeat) row
+  private root: Row | undefined;                   // cached: VS Code asks for the root again when the view reappears
 
   private changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
@@ -40,28 +51,45 @@ class TraceTreeProvider implements vscode.TreeDataProvider<TraceNode> {
     this.uri = uri;
     this.graph = graph;
     this.parentsOf = new Map();
+    this.expanded = new Set();
+    this.root = undefined;
     for (const [parent, child] of graph.edges) {
       this.parentsOf.set(child, [...(this.parentsOf.get(child) ?? []), parent]);
     }
     this.changed.fire();
   }
 
-  // No element: the root (the hovered entry). Otherwise: the entries its type came from.
-  getChildren(node?: TraceNode): TraceNode[] {
+  // No element: the root (the hovered entry). Otherwise: the entries its type came from,
+  // each a full row the first time its node appears and a repeat after that.
+  getChildren(row?: Row): Row[] {
     if (!this.graph) {
       return [];
     }
-    const ids = node ? this.parentsOf.get(node.id) ?? [] : [0];
-    return ids.map((id) => this.graph!.nodes[id]);
+    if (!row) {
+      this.root ??= this.makeRow(0);
+      return [this.root];
+    }
+    if (row.repeat) {
+      return [];
+    }
+    row.children ??= (this.parentsOf.get(row.node.id) ?? []).map((id) => this.makeRow(id));
+    return row.children;
   }
 
-  getTreeItem(node: TraceNode): vscode.TreeItem {
-    const hasParents = (this.parentsOf.get(node.id) ?? []).length > 0;
+  private makeRow(id: number): Row {
+    const repeat = this.expanded.has(id);
+    this.expanded.add(id);
+    return { node: this.graph!.nodes[id], repeat };
+  }
+
+  getTreeItem(row: Row): vscode.TreeItem {
+    const node = row.node;
+    const hasParents = !row.repeat && (this.parentsOf.get(node.id) ?? []).length > 0;
     const item = new vscode.TreeItem(
       node.code,
       hasParents ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
     );
-    item.description = `${node.type} · line ${node.line}`;
+    item.description = `${row.repeat ? '↻ shown above · ' : ''}${node.type} · line ${node.line}`;
     item.tooltip = `${node.code}\n${node.type}, this file, line ${node.line}`;
     item.command = { command: 'rune.jumpToLine', title: 'Jump to line', arguments: [node.file ?? this.uri, node.line] };
     return item;
@@ -69,7 +97,7 @@ class TraceTreeProvider implements vscode.TreeDataProvider<TraceNode> {
 }
 
 const provider = new TraceTreeProvider();
-let treeView: vscode.TreeView<TraceNode> | undefined;
+let treeView: vscode.TreeView<Row> | undefined;
 
 // Called once from activate()
 export function registerTraceTree(context: vscode.ExtensionContext) {

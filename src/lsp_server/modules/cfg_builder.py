@@ -105,7 +105,7 @@ class CFGBuilder():
                     flat.append(ast.Expr(value=expr, **span))
                 else:
                     flat.append(ast.Assign(targets=[item.optional_vars],
-                                           value=ast_node_wrappers.EnteredFrom(expr), **span))
+                                           value=ast_node_wrappers.EnteredFrom(expr, item.optional_vars), **span))
             flat.extend(self._inline_with(stmt.body))
         return flat
 
